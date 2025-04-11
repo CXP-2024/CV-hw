@@ -1,0 +1,72 @@
+\documentclass[]{article}
+
+\usepackage{cite} % Add this line to include the cite package
+% \usepackage[backref]{hyperref} % Add this line to include the hyperref package
+
+\usepackage{amsmath} % Add this line to include the amsmath package
+\usepackage{graphicx} % Add this line to include the graphicx package
+\usepackage{fancyhdr}
+
+\title{Computer Vision homework 2}
+\author{Pan Changxun}
+\date{March 2025}
+
+\topmargin=-0.45in      %
+\evensidemargin=0in     %
+\oddsidemargin=0in      %
+\textwidth=6.5in   
+\textheight=9.0in       %
+\headsep=0.25in 
+
+\pagestyle{fancy}
+\fancyhf{} % Clear all header and footer fields
+\fancyhead[L]{Pan Changxun} % Left header
+\fancyhead[C]{Computer Vision homework 2} % Center header
+\fancyhead[R]{March 2025} % Right header
+%\fancyfoot[L]{\leftmark} % Left footer
+\fancyfoot[C]{\thepage} % Center footer
+%\fancyfoot[R]{} % Right footer
+
+\begin{document}
+\maketitle
+
+\section{3D Location Transformation}
+\begin{enumerate}
+	\item[a)] The intrinsic matrix is given by:
+	\begin{equation}
+		K = \begin{bmatrix}
+			f_x & 0 & c_x \\
+			0 & f_y & c_y \\
+			0 & 0 & 1
+		\end{bmatrix}
+	\end{equation}
+	When \(f_x = f_y = f = 721.5mm\) and \(c_x, c_y = (609.6, 172.9)mm\), the intrinsic matrix becomes:
+	\begin{equation}
+		K = \begin{bmatrix}
+			721.5 & 0 & 609.6 \\
+			0 & 721.5 & 172.9 \\
+			0 & 0 & 1
+		\end{bmatrix}
+	\end{equation}
+	\item[b)] The equation of the ground plane in camera's coordinate system is \(y=1.7m\).
+	\item[c)] When given a 2D point (x,y) in the image and suppose it lies on the ground (y=1.7m), we can find the corresponding 3D point in the camera's coordinate system using the following equations:
+	\begin{equation}
+		Y = 1.7m
+	\end{equation}
+	\begin{equation}
+		Z = \frac{Y \cdot f_y}{y - c_y} = \frac{1.7m \cdot 721.5mm}{y - 172.9mm}
+	\end{equation}
+	\begin{equation}
+		X = Y \cdot \frac{x - c_x}{y - c_y} = 1.7m \cdot \frac{x - 609.6mm}{y - 172.9mm}
+	\end{equation}
+	where (X, Y, Z) are the coordinates of the corresponding 3D point in the camera's coordinate system and \(c_x, c_y\) equals to (609.6, 172.9)mm.
+\end{enumerate}
+
+\section{Road Analyzing}
+\begin{enumerate}
+	\item[a)] The depth map is shown below:
+	\item[b)] Visualize the bounding boxes in the images:
+	And the 3D coordinates of the center of the bounding box are:
+\end{enumerate}
+
+\end{document}
