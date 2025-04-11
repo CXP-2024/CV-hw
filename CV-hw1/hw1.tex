@@ -1,0 +1,90 @@
+\documentclass[]{article}
+
+\usepackage{cite} % Add this line to include the cite package
+% \usepackage[backref]{hyperref} % Add this line to include the hyperref package
+
+\usepackage{amsmath} % Add this line to include the amsmath package
+\usepackage{fancyhdr}
+
+\title{Computer Vision homework 1}
+\author{Pan Changxun}
+\date{March 2025}
+
+\topmargin=-0.45in      %
+\evensidemargin=0in     %
+\oddsidemargin=0in      %
+\textwidth=6.5in   
+\textheight=9.0in       %
+\headsep=0.25in 
+
+\pagestyle{fancy}
+\fancyhf{} % Clear all header and footer fields
+\fancyhead[L]{Pan Changxun} % Left header
+\fancyhead[C]{Computer Vision homework 1} % Center header
+\fancyhead[R]{March 2025} % Right header
+%\fancyfoot[L]{\leftmark} % Left footer
+\fancyfoot[C]{\thepage} % Center footer
+%\fancyfoot[R]{} % Right footer
+
+\begin{document}
+\maketitle
+
+\section{Short Answer Questions}
+\begin{enumerate}
+	\item[1.]
+	(using 0-padding)\\
+		The Answer for full mode is:
+		\begin{equation*}
+			\begin{bmatrix}
+				3 & 11 & 26 & 35 & 38 & 33 & 25 & 15 \\
+				17 & 50 & 96 & 105 & 100 & 102 & 85 & 48 \\
+				49 & 127 & 209 & 198 & 180 & 202 & 172 & 90 \\
+				67 & 151 & 186 & 130 & 101 & 184 & 186 & 90 \\
+				57 & 149 & 189 & 178 & 156 & 207 & 168 & 81 \\
+				11 & 90 & 158 & 248 & 248 & 287 & 200 & 111 \\
+				35 & 85 & 164 & 194 & 190 & 194 & 134 & 96 \\
+				49 & 105 & 154 & 124 & 118 & 132 & 119 & 63
+			\end{bmatrix}
+		\end{equation*}
+		The Answer for same mode is:
+		\begin{equation*}
+			\begin{bmatrix}
+				50 & 96 & 105 & 100 & 102 & 85 \\
+				127 & 209 & 198 & 180 & 202 & 172 \\
+				151 & 186 & 130 & 101 & 184 & 186 \\
+				149 & 189 & 178 & 156 & 207 & 168 \\
+				90 & 158 & 248 & 248 & 287 & 200 \\
+				85 & 164 & 194 & 190 & 194 & 134
+			\end{bmatrix}
+		\end{equation*}
+		The Answer for valid mode is:
+		\begin{equation*}
+			\begin{bmatrix}
+				209 & 198 & 180 & 202 \\
+				186 & 130 & 101 & 184 \\
+				189 & 178 & 156 & 207 \\
+				158 & 248 & 248 & 287
+			\end{bmatrix}
+		\end{equation*}
+		\item [2.]
+		The second derivative filter
+		f'' is \((0.25, 0, -0.5 , 0, 0.25)\)
+		\item [3.]
+		We just use the "same" mode padded image to prove the theorem.\\
+		Suppose the image is \(I\), \(f\) is \(w\times 1\), \(G\) is \(1 \times h\), then we have:
+		\[(I\star f)_{i, j}=\sum_{l=0}^{h}I_{i+k,j}f_{w-k}\]
+		\begin{align*}
+		((I\star f)\star G)_{i,j}&=\sum_{l=0}^{h}(I\star f)_{i, j+l}G_{h-l}\\
+		&=\sum_{l=0}^{h}\sum_{k=0}^{w}I_{i+k,j+l}f_{w-k}G_{h-l}
+		\end{align*}
+		And meanwhile, we have:
+		\[(I\star (fG))_{i,j}=\sum_{l=0}^{h}\sum_{k=0}^{w}I_{i+k,j+l}(fG)_{w-k, h-l}\]
+		Since \(fG\) is a \(w\times h\) matrix, we have:
+		\[(fG)_{w-k, h-l}=\sum_{m=0}^{w}\sum_{n=0}^{h}f_{w-m}G_{h-n}\delta_{m, k}\delta_{n, l}=f_{w-k}G_{h-l}\]
+		Thus, we have:
+		\[(I\star (fG))_{i,j}=\sum_{l=0}^{h}\sum_{k=0}^{w}I_{i+k,j+l}f_{w-k}G_{h-l}\]
+		Thus, we have \((I\star f)\star G=(I\star (fG))\)
+\end{enumerate}
+
+
+\end{document}
