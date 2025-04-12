@@ -98,13 +98,29 @@ class BoundingBoxesTransform(object):
 		"""
 		3D边界框投影核心算法
 		坐标系转换流程：
-		1. 物体局部坐标系 -> 世界坐标系
-		2. 世界坐标系 -> 相机坐标系
-		3. 投影到2D图像平面
+		1. nonplayer local转正
+		2. 局部转正体坐标系 -> player 坐标系
+		3. player坐标系转正
+		4. 平移到相机坐标系并转正
+		5. 投影到2D图像坐标系
 		"""
+		# first compute the real distance between the player and nonplayer
+		player_location = np.array([player.transform.location.x, player.transform.location.y, player.transform.location.z])
+		nonplayer_location = np.array([nonplayer.transform.location.x, nonplayer.transform.location.y, nonplayer.transform.location.z])
+		dis = np.linalg.norm(player_location - nonplayer_location)
+		print("\033[1;32mthe distance between player and nonplayer:", dis, "\033[0m")
 		# 生成原始边界框顶点（局部坐标系）
 		bb_cords = BoundingBoxesTransform._create_bb_points(nonplayer)
-		
+		# Try to get transform.location.z first, fallback to extent.z if not available
+		try:
+			z_box_local_nonplayer = nonplayer.boundingBox.transform.location.z
+		except (KeyError, AttributeError):
+			z_box_local_nonplayer = 0.0 #nonplayer.boundingBox.extent.z# this means the nonplayer is a pedestrian, so we set it to 0.0
+			
+		try:
+			z_box_local_player = player.boundingBox.transform.location.z
+		except (KeyError, AttributeError):
+			z_box_local_player = 0.0
 
 		# 获取各坐标系变换参数
 		player_transform = BoundingBoxesTransform._complete_transform(player.get_transform())
@@ -112,76 +128,138 @@ class BoundingBoxesTransform(object):
 		camera_transform = BoundingBoxesTransform._complete_transform(camera.get_transform())
 
 		# ========== 坐标系转换阶段 ==========
-		# 阶段1：局部 -> 世界坐标系
-		nonplayer_world = BoundingBoxesTransform._get_world_transform(nonplayer_transform)
-		local_to_world = nonplayer_world @ bb_cords.T  # 4x8矩阵
+		# nonplayer local rotate
+		nonplayer_rotate_tran = BoundingBoxesTransform._get_nonplayer_rotate_transform(nonplayer_transform)
+		np_rotate = nonplayer_rotate_tran @ bb_cords.T  # 4x8矩阵
 
-		# 阶段2：世界 -> 相机坐标系
-		world_to_cam = BoundingBoxesTransform._get_view_matrix(player_transform, camera_transform)
-		world_to_cam_points = world_to_cam @ local_to_world  # 4x8矩阵
+		# nonplayer to player
+		nonplayer_player_tran = BoundingBoxesTransform._get_player_transform(nonplayer_transform, player_transform, z_box_local_nonplayer, z_box_local_player)
+		player_unrotate = nonplayer_player_tran @ np_rotate  # 4x8矩阵
+
+		# player rotate
+		player_rotate_tran = BoundingBoxesTransform._get_player_rotate_matrix(player_transform)
+		player_rotate = player_rotate_tran @ player_unrotate  # 4x8矩阵
+
+		# player to camera 
+		camera_tran = BoundingBoxesTransform._get_camera_matrix(camera_transform, z_box_local_player)
+		camera_unrotate = camera_tran @ player_rotate  # 4x8矩阵
+
+		# camera rotate
+		camera_rotate_tran = BoundingBoxesTransform._get_view_matrix(camera_transform)
+		camera_view = camera_rotate_tran @ camera_unrotate  # 4x8矩阵
 
 		# ========== 投影阶段 ==========
-		# 阶段3：3D->2D投影（透视除法）
-		points_3d = world_to_cam_points[:3, :]
-		points_2d = camera.calibration @ (points_3d / points_3d[2:3, :])  # 归一化并应用内参
-
-		# ========== 调试输出：关键转换结果 ==========
-		print("[DEBUG] World Coordinates:")
-		print(local_to_world[:3, :4].T)
+		# Filter out points behind the camera (negative Z)
+		if np.all(camera_view[0, :] < 0):
+			print("The object is behind the camera")
+			print(camera_view[0, :])
+			# Return empty box or placeholder if the object is behind camera
+			return np.zeros((8, 2))
+			
+		# Reorder axes for correct projection
+		camera_view_ordered = np.zeros((4, 8))
+		# X axis in image corresponds to Y in world (right direction)
+		camera_view_ordered[0, :] = camera_view[1, :]
+		# Y axis in image corresponds to Z in world (up direction)
+		camera_view_ordered[1, :] = camera_view[2, :]  
+		# Z axis in image (depth) corresponds to X in world (forward direction)
+		camera_view_ordered[2, :] = camera_view[0, :]
+		camera_view_ordered[3, :] = camera_view[3, :]
 		
-		print("[DEBUG] Camera Coordinates:")
-		print(world_to_cam_points[:3, :4].T)
+		# Check if any points are too close to the camera (would cause division by near-zero)
+		min_depth = 0.1  # Minimum allowed depth
+		if np.any(abs(camera_view_ordered[2, :]) < min_depth):
+			# Return empty box or placeholder if the object is too close to camera
+			print("The object is too close to the camera")
+			print(camera_view_ordered[2, :])
+			return np.zeros((8, 2))
 		
-		print("[DEBUG] Projected 2D Points:")
-		print(points_2d[:2, :].T)
-
-		# 格式转换并返回（8x2矩阵）
-		return np.array([[points_2d[0, i], points_2d[1, i]] for i in range(8)])
+		# Perspective division - normalize by depth
+		points_2d = np.zeros((3, 8))
+		points_2d[0, :] = camera_view_ordered[0, :] / camera_view_ordered[2, :]
+		points_2d[1, :] = camera_view_ordered[1, :] / camera_view_ordered[2, :]
+		points_2d[2, :] = 1.0
+		
+		# Apply camera calibration matrix
+		points_2d = camera.calibration @ points_2d
+		points_2d = points_2d[:2, :]  / points_2d[2, :]
+		points_2d = points_2d[:2, :]
+		
+		# Flip Y-axis to match image coordinates (origin at top-left)
+		points_2d[1, :] = IMAGE_HEIGHT - points_2d[1, :]
+		
+		# Filter out any points outside the image bounds with a margin
+		margin = 500   # Allow points to be slightly outside the frame
+		if (np.any(points_2d[0, :] < -margin) or 
+			np.any(points_2d[0, :] > IMAGE_WIDTH + margin) or
+			np.any(points_2d[1, :] < -margin) or 
+			np.any(points_2d[1, :] > IMAGE_HEIGHT + margin)):
+			print("The object is outside the image bounds")
+			print(points_2d[0, :])
+			print(points_2d[1, :])
+			print(camera_view_ordered)
+			return np.zeros((8, 2))
+		
+		# If can go here, print its ok
+		print("\033[1;34mThe object is inside the image bounds\033[0m")
+			
+		return points_2d.T  # 8x2矩阵
+		
 
 	@staticmethod
-	def _get_world_transform(transform):
-		"""构建物体世界坐标系变换矩阵（含旋转和平移）"""
-		# 欧拉角转弧度
-		roll = np.radians(transform.rotation.roll)
-		pitch = np.radians(transform.rotation.pitch)
-		yaw = np.radians(transform.rotation.yaw)
-		
-		# 旋转矩阵（ZYX顺序：yaw -> pitch -> roll）
-		R = (
-			Rotation.from_euler('z', yaw, degrees=False).as_matrix() @ 
-			Rotation.from_euler('y', pitch, degrees=False).as_matrix() @ 
-			Rotation.from_euler('x', roll, degrees=False).as_matrix()
-		)
-		
-		# 齐次变换矩阵
-		T = np.identity(4)
-		T[:3, :3] = R
-		T[:3, 3] = [transform.location.x, transform.location.y, transform.location.z]
-		return T
+	def _get_nonplayer_rotate_transform(nonplayer_transform):
+		"""获取非玩家坐标系变换矩阵"""
+		# 非玩家坐标系
+		nonplayer_rot = Rotation.from_euler(
+			'zyx', [nonplayer_transform.rotation.yaw, # here should be not reverse but the 2nd and 3rd axis maybe reverse or not
+					nonplayer_transform.rotation.pitch, 
+					-nonplayer_transform.rotation.roll], degrees=True)
+		nonplayer_T = np.identity(4)
+		nonplayer_T[:3, :3] = nonplayer_rot.as_matrix()
+		return nonplayer_T
 
 	@staticmethod
-	def _get_view_matrix(player_transform, camera_transform):
-		"""构建世界->相机视图矩阵"""
-		# 相机相对玩家变换
-		cam_rel = np.identity(4)
-		cam_rel[:3, 3] = [camera_transform.location.x, 
-							camera_transform.location.y,
-							camera_transform.location.z]
-		
-		# 玩家世界坐标系
+	def _get_player_transform(nonplayer_transform, player_transform, z_box_local_nonplayer, z_box_local_player):
+		"""获取非玩家坐标系->玩家坐标系变换矩阵"""
+		# 非玩家相对玩家变换
+		player_rel = np.identity(4)
+		player_rel[:3, 3] = [nonplayer_transform.location.x - player_transform.location.x,
+							 nonplayer_transform.location.y - player_transform.location.y,
+							 z_box_local_nonplayer - z_box_local_player + nonplayer_transform.location.z - player_transform.location.z]
+		return player_rel
+	
+	@staticmethod
+	def _get_player_rotate_matrix(player_transform):
+		"""获取玩家坐标系变换矩阵"""
+		# 玩家坐标系 here we should rotate the reverse
 		player_rot = Rotation.from_euler(
-			'zyx', [player_transform.rotation.yaw, 
-					player_transform.rotation.pitch,
+			'zyx', [-player_transform.rotation.yaw, 
+					-player_transform.rotation.pitch,
 					player_transform.rotation.roll], degrees=True)
 		player_T = np.identity(4)
 		player_T[:3, :3] = player_rot.as_matrix()
-		player_T[:3, 3] = [player_transform.location.x,
-							player_transform.location.y,
-							player_transform.location.z]
-		
-		# 组合变换矩阵
-		view_matrix = np.linalg.inv(player_T @ cam_rel)
-		return view_matrix
+		return player_T
+
+	@staticmethod
+	def _get_camera_matrix(camera_transform, z_box_local_player):
+		"""获取玩家坐标系->相机坐标系变换矩阵"""
+		# camera_transform is just relative to the player
+		camera_rel = np.identity(4)
+		camera_rel[:3, 3] = [-camera_transform.location.x,
+							 -camera_transform.location.y,
+							 -camera_transform.location.z + z_box_local_player]
+		return camera_rel
+	
+	@staticmethod
+	def _get_view_matrix(camera_transform):
+		"""获取相机坐标系变换矩阵"""
+		camera_rot = Rotation.from_euler(
+			'zyx', [camera_transform.rotation.yaw, 
+					camera_transform.rotation.pitch,
+					camera_transform.rotation.roll], degrees=True)
+		camera_T = np.identity(4)
+		camera_T[:3, :3] = camera_rot.as_matrix()
+		return camera_T
 
 	@staticmethod
 	def _create_bb_points(nonplayer):
@@ -191,14 +269,17 @@ class BoundingBoxesTransform(object):
 
 		cords = np.zeros((8, 4))
 		extent = nonplayer.boundingBox.extent
-		cords[0, :] = np.array([extent.x, extent.y, -extent.z, 1])
-		cords[1, :] = np.array([-extent.x, extent.y, -extent.z, 1])
-		cords[2, :] = np.array([-extent.x, -extent.y, -extent.z, 1])
-		cords[3, :] = np.array([extent.x, -extent.y, -extent.z, 1])
-		cords[4, :] = np.array([extent.x, extent.y, extent.z, 1])
-		cords[5, :] = np.array([-extent.x, extent.y, extent.z, 1])
-		cords[6, :] = np.array([-extent.x, -extent.y, extent.z, 1])
-		cords[7, :] = np.array([extent.x, -extent.y, extent.z, 1])
+		# Scale the extent to make the bounding box more visible
+		scale_factor = 1.0  # You can adjust this if needed
+		
+		cords[0, :] = np.array([extent.x * scale_factor, extent.y * scale_factor, -extent.z * scale_factor, 1])
+		cords[1, :] = np.array([-extent.x * scale_factor, extent.y * scale_factor, -extent.z * scale_factor, 1])
+		cords[2, :] = np.array([-extent.x * scale_factor, -extent.y * scale_factor, -extent.z * scale_factor, 1])
+		cords[3, :] = np.array([extent.x * scale_factor, -extent.y * scale_factor, -extent.z * scale_factor, 1])
+		cords[4, :] = np.array([extent.x * scale_factor, extent.y * scale_factor, extent.z * scale_factor, 1])
+		cords[5, :] = np.array([-extent.x * scale_factor, extent.y * scale_factor, extent.z * scale_factor, 1])
+		cords[6, :] = np.array([-extent.x * scale_factor, -extent.y * scale_factor, extent.z * scale_factor, 1])
+		cords[7, :] = np.array([extent.x * scale_factor, -extent.y * scale_factor, extent.z * scale_factor, 1])
 		return cords
 
 	@staticmethod
@@ -236,8 +317,8 @@ def set_calibration(camera):
 	# Set calibration matrix
 	calibration[0, 0] = focal_length  # fx
 	calibration[1, 1] = focal_length  # fy
-	calibration[0, 2] = IMAGE_WIDTH / 2.0  # cx - principal point x
-	calibration[1, 2] = IMAGE_HEIGHT / 2.0  # cy - principal point y
+	calibration[0, 2] = IMAGE_WIDTH / 2  # we'll add the principal point later, The y should be Height - y
+	calibration[1, 2] = IMAGE_HEIGHT / 2  # we'll add the principal point later
 	
 	camera.calibration = calibration
 	return camera
@@ -311,7 +392,7 @@ def main():
 		bounding_boxes = BoundingBoxesTransform.get_bounding_boxes(nonPlayerAgents, camera_agent, playerAgent)
 		result = BoundingBoxesTransform.draw_3D_bounding_boxes(image, bounding_boxes)
 		print("length of bounding boxes: ", len(bounding_boxes))
-		print("the first bounding box: ", bounding_boxes[0])
+		#print("the first bounding box: ", bounding_boxes[0])
 		
 		# Save with absolute path for reliability
 		script_dir = os.path.dirname(os.path.abspath(__file__))

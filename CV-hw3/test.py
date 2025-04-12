@@ -28,13 +28,56 @@ data = {
     }
 }
 
+from scipy.spatial.transform import Rotation
+import numpy as np
+yaw = 0
+pitch = 30
+roll = 0
+nonplayer_rot = Rotation.from_euler(
+			'zyx', [yaw, 
+					pitch,
+					roll], degrees=True)
+rotation_matrix = nonplayer_rot.as_matrix()
+print(rotation_matrix)  # Outputs the rotation matrix
 
-def display_agent_info(agent):
-    print(f"Agent Name: {agent.name}")
-    print(f"Agent Color: {agent.settings.color}")
-    print(f"Agent Transform: {agent.settings.get_transform()}")
+data = {
+                "boundingBox": {
+                    "extent": {
+                        "x": 1.9876738786697388,
+                        "y": 0.8463225364685059,
+                        "z": 0.8048363924026489
+                    },
+                    "transform": {
+                        "location": {
+                            "z": 0.7699999809265137
+                        },
+                        "orientation": {
+                            "x": 1.0
+                        },
+                        "rotation": {}
+                    }
+                },
+                "forwardSpeed": 5.594553470611572,
+                "transform": {
+                    "location": {
+                        "x": 1.5918151140213013,
+                        "y": 32.22174072265625,
+                        "z": 38.148128509521484
+                    },
+                    "orientation": {
+                        "x": -0.0005538463592529297,
+                        "y": -0.9999951720237732,
+                        "z": -0.0031015125568956137
+                    },
+                    "rotation": {
+                        "pitch": -0.17770785093307495,
+                        "roll": 0.0008003832772374153,
+                        "yaw": -90.03173065185547
+                    }
+                }
+            }
 
 agent = Agent(data)
-print(agent.name)                  # Outputs: Agent1
-print(agent.settings.color)        # Outputs: blue
-print(agent.settings.get_transform())  # Outputs: [1, 2, 3]
+print(agent.boundingBox.extent.x)  # Accessing nested attributes
+print(agent.boundingBox.transform.location.z)  # Accessing nested attributes
+print(agent.get_transform().location.x)  # Accessing nested attributes

@@ -16,14 +16,14 @@ def img_depth(disparity: np.ndarray, f: float, baseline: float):
     :return: depth matrix, type: np.ndarray, shape: (n, m, 1)
     """
     # The depth is calculated by the formula: depth = f * baseline / disparity
-    # f is in mm, baseline is in m, and disparity is in mm
+    # f is in pixel, baseline is in meter, and disparity is in pixel
     # here is the code to calculate the depth
     depth = np.zeros(disparity.shape)
     # Avoid division by zero by adding a small epsilon
     epsilon = 1e-10
-    depth[:, :, 0] = f * baseline / (disparity[:, :, 0] + epsilon) # now depth is in m
-    # Return raw depth in millimeters
-    return depth * 1000
+    depth[:, :, 0] = f * baseline / (disparity[:, :, 0] + epsilon) # now depth is in meter
+    # Return raw depth in meter
+    return depth
 
       
 
@@ -67,7 +67,7 @@ def coordinate_2d_to_3d(coordinate_q: np.ndarray, f: float, px: float, py: float
     # X = (x - px) * depth / f
     # Y = (y - py) * depth / f
     # Z = depth
-    # here f is mm, px, py is mm， and depth is in mm
+    # here f is in pixel, px, py is pixel, and depth is in meter
     # here is the code to calculate the 3D coordinates
     # Get the pixel coordinates
     x = coordinate_q[0]
@@ -78,8 +78,8 @@ def coordinate_2d_to_3d(coordinate_q: np.ndarray, f: float, px: float, py: float
     X = (x - px) * depth_value / f
     Y = (y - py) * depth_value / f
     Z = depth_value
-    # Return the 3D coordinates in meters
-    return np.array([X, Y, Z], dtype=np.float32) / 1000  # Convert to meters
+    # Return the 3D coordinates in meter
+    return np.array([X, Y, Z], dtype=np.float32)  # No conversion needed
 
 
 def solve_question1():
@@ -102,7 +102,8 @@ def solve_question1():
         print(f"Processing disparity file: {disparity_file}")
         
         # Load the disparity map
-        disparity = cv2.imread(disparity_file, cv2.IMREAD_UNCHANGED)
+        disparity = cv2.imread(disparity_file, cv2.IMREAD_GRAYSCALE)
+        #disparity = cv2.imread(disparity_file)
         if disparity is None:
             print(f"Failed to load disparity file: {disparity_file}")
             continue
@@ -138,6 +139,7 @@ def solve_question1():
         
         # Compute depth map
         disparity = np.expand_dims(disparity, axis=-1)  # Ensure disparity has shape (n, m, 1)
+        print(disparity.max(), disparity.min()) 
         depth = img_depth(disparity, focal_length, baseline)
         
         # Display depth map with better visualization
@@ -172,6 +174,24 @@ def solve_question1():
         print(f"  Median depth: {np.median(valid_depths):.2f} meters")
         print(f"  Depth range: {max_depth - min_depth:.2f} meters")
         print(f"  Valid depth count: {len(valid_depths)}")
+        # save into a directory
+        save_dir = 'src/problem2_analyzing/data/depth'
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        depth_file = os.path.join(save_dir, os.path.basename(disparity_file).replace('_left_disparity.png', '_depth.png'))
+        # Save the depth map as a PNG image and as a plasma colormap with colorbar
+        plt.imsave(depth_file, depth[:, :, 0], cmap='plasma', vmin=min_depth, vmax=max_depth)
+        print(f"Depth map saved to: {depth_file}")
+        # draw the corresponding colorbar as a single image
+        plt.figure(figsize=(5, 2))
+        plt.imshow(np.linspace(min_depth, max_depth, 256).reshape(1, -1), cmap='plasma', aspect='auto')
+        plt.axis('off')
+        plt.colorbar(label='Depth (meters)', orientation='horizontal')
+        plt.title('Depth Colorbar')
+        colorbar_file = os.path.join(save_dir, os.path.basename(disparity_file).replace('_left_disparity.png', '_colorbar.png'))
+        plt.savefig(colorbar_file, bbox_inches='tight', pad_inches=0)
+        print(f"Colorbar saved to: {colorbar_file}")
+        plt.close()
         
 '''
 # Under the folder data/detections, there are also the detection results for
@@ -247,13 +267,22 @@ def solve_question2():
         plt.imshow(img)
         plt.title(f'Bounding Boxes - {os.path.basename(detection_file)}')
         plt.show()
+        # Save the image with bounding boxes
+        save_dir = 'src/problem2_analyzing/data/bbox'
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        bbox_file = os.path.join(save_dir, os.path.basename(detection_file).replace('_dets.mat', '_bbox.png'))
+        plt.imsave(bbox_file, img)
+        print(f"Image with bounding boxes saved to: {bbox_file}")
+				
         
         # Load the corresponding disparity map
         disparity_file = os.path.join('src/problem2_analyzing/data/detections', os.path.basename(detection_file).replace('_dets.mat', '_left_disparity.png'))
         if not os.path.exists(disparity_file):
             print(f"Disparity file not found: {disparity_file}")
             continue
-        disparity = cv2.imread(disparity_file, cv2.IMREAD_UNCHANGED)
+        disparity = cv2.imread(disparity_file, cv2.IMREAD_GRAYSCALE)
+        #disparity = cv2.imread(disparity_file)
         if disparity is None:
             print(f"Failed to load disparity file: {disparity_file}")
             continue
@@ -295,13 +324,22 @@ def solve_question2():
             coordinate_q = np.array([center_x, center_y])
             coordinate_3d = coordinate_2d_to_3d(coordinate_q, focal_length, px, py, depth)
             print(f"3D Coordinates for detection ID {int(obj_id)}: {coordinate_3d}")
+            # Save the 3D coordinates to a file
+            save_dir = 'src/problem2_analyzing/data/3d_coordinates'
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            coord_file = os.path.join(save_dir, os.path.basename(detection_file).replace('_dets.mat', '_3d_coordinates.txt'))
+            with open(coord_file, 'a') as f:
+                f.write(f"ID: {int(obj_id)}, original 2D coordinates: {coordinate_q}, 3D Coordinates: {coordinate_3d}\n")
+            print(f"3D coordinates for detection ID {int(obj_id)} saved to {coord_file}")
+            
 
   
 def main():
     ############    load the data, implement the above three functions and solve the two questions   #######
     # Call the function to solve question 1
-    solve_question1()
-    #solve_question2()
+    #solve_question1()
+    solve_question2()  
     
     # Question 2 code would go here
     # ...

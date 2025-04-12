@@ -1,0 +1,2 @@
+ID: 3, original 2D coordinates: [827 249], 3D Coordinates: [2.185533   0.76535624 7.252297  ]
+ID: 6, original 2D coordinates: [645 213], 3D Coordinates: [ 0.94398415  1.0693126  19.218586  ]
