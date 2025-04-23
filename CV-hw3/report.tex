@@ -7,9 +7,9 @@
 \usepackage{graphicx} % Add this line to include the graphicx package
 \usepackage{fancyhdr}
 
-\title{\textbf{Computer Vision homework 2}}
+\title{\textbf{Computer Vision homework 3}}
 \author{Pan Changxun}
-\date{March 2025}
+\date{April 2025}
 
 \topmargin=-0.45in      %
 \evensidemargin=0in     %
@@ -21,8 +21,8 @@
 \pagestyle{fancy}
 \fancyhf{} % Clear all header and footer fields
 \fancyhead[L]{Pan Changxun} % Left header
-\fancyhead[C]{Computer Vision homework 2} % Center header
-\fancyhead[R]{March 2025} % Right header
+\fancyhead[C]{Computer Vision homework 3} % Center header
+\fancyhead[R]{April 2025} % Right header
 %\fancyfoot[L]{\leftmark} % Left footer
 \fancyfoot[C]{\thepage} % Center footer
 %\fancyfoot[R]{} % Right footer
@@ -40,7 +40,7 @@
 			0 & 0 & 1
 		\end{bmatrix}
 	\end{equation}
-	When \(f_x = f_y = f = 721.5mm\) and \(c_x, c_y = (609.6, 172.9)mm\), the intrinsic matrix becomes:
+	When \(f_x = f_y = f = 721.5\) and \(c_x, c_y = (609.6, 172.9)\), the intrinsic matrix becomes:
 	\begin{equation}
 		K = \begin{bmatrix}
 			721.5 & 0 & 609.6 \\
@@ -48,54 +48,66 @@
 			0 & 0 & 1
 		\end{bmatrix}
 	\end{equation}
-	\item[b)] The equation of the ground plane in camera's coordinate system is \(y=1.7m\).
-	\item[c)] When given a 2D point (x,y) in the image and suppose it lies on the ground (y=1.7m), we can find the corresponding 3D point in the camera's coordinate system using the following equations:
+	\item[b)] We use the camera's coordinates: \(x\) means the right, \(y\) means the down, \(z\) means the forward. Then the equation of the ground plane in camera's coordinate system is \(y=1.7m\).
+	\item[c)] We use the same camera's coordinate system as in part b). 
+	When given a 2D point (x,y) in the image and suppose it lies on the ground (y=1.7m), we can find the corresponding 3D point in the camera's coordinate system using the following equations:
 	\begin{equation}
 		Y = 1.7m
 	\end{equation}
 	\begin{equation}
-		Z = \frac{Y \cdot f_y}{y - c_y} = \frac{1.7m \cdot 721.5mm}{y - 172.9mm}
+		Z = \frac{Y \cdot f_y}{y - c_y} = \frac{1.7m \cdot 721.5}{y - 172.9}
 	\end{equation}
 	\begin{equation}
-		X = Y \cdot \frac{x - c_x}{y - c_y} = 1.7m \cdot \frac{x - 609.6mm}{y - 172.9mm}
+		X = Y \cdot \frac{x - c_x}{y - c_y} = 1.7m \cdot \frac{x - 609.6}{y - 172.9}
 	\end{equation}
-	where (X, Y, Z) are the coordinates of the corresponding 3D point in the camera's coordinate system and \(c_x, c_y\) equals to (609.6, 172.9)mm.
+	where (X, Y, Z) are the coordinates of the corresponding 3D point in the camera's coordinate system and \(c_x, c_y\) equals to (609.6, 172.9).
 \end{enumerate}
 
 \section{Road Analyzing}
 \begin{enumerate}
-	\item[a)] The depth maps are stored in the folder "/src/problem2\_analyzing/data/depth/" with corresponding colorbar. Here is an example of the depth map:
-	\begin{figure}[h]
-		\centering
-		\includegraphics[width=0.5\textwidth]{src/problem2_analyzing/data/depth/004945_depth.png}
-		\caption{004945\_depth map}
-		\label{fig:depth_map_example}
-	\end{figure}
-	\newpage
-	And here is the colorbar for the depth map:
-	\begin{figure}[h]
-		\centering
-		\includegraphics[width=0.5\textwidth]{src/problem2_analyzing/data/depth/004945_colorbar.png}
-		\caption{004945\_depth map colorbar}
-		\label{fig:colorbar}
-	\end{figure}
-	\item[b)] Visualize the bounding boxes in the images are stored in the folder "/src/problem2\_analyzing/data/bbox/". Here is an example of the bounding box visualization:
-	\begin{figure}[h]
-		\centering
-		\includegraphics[width=0.5\textwidth]{src/problem2_analyzing/data/bbox/004945_bbox.png}
-		\caption{004945 bounding box visualization}
-		\label{fig:bbox_visualization}
-	\end{figure}
-	And the 3D coordinates of the center of the bounding box are stored in the folder "/src/problem2\_analyzing/data/3d\_coordinates/". Here are examples of the 3D coordinates of 004945:
-		\begin{enumerate}
-			\item ID: 3, original 2D coordinates: [950 256], 3D Coordinates: [3.2385147  0.79094404 6.863781  ]
-			\item ID: 1, original 2D coordinates: [758 184], 3D Coordinates: [ 9.884517   0.7422009 48.046467 ]
-			\item ID: 1, original 2D coordinates: [538 190], 3D Coordinates: [-3.4654994  0.8303526 34.942886 ]
-		\end{enumerate}
+	\item[a)] For the depth map visualization, I truncated the 5\% most distant pixels to enhance the details of nearer objects. This approach provides better contrast and clarity in the depth representation.
+		The resulting depth maps are stored in the folder "/src/problem2\_analyzing/data/depth/" with corresponding colorbars. An example depth map is shown below:
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.5\textwidth]{src/problem2_analyzing/data/depth/004945_depth.png}
+			\caption{Depth map visualization for frame 004945}
+			\label{fig:depth_map_example}
+		\end{figure}
+		\newpage
+		The corresponding colorbar for interpreting the depth values:
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.5\textwidth]{src/problem2_analyzing/data/depth/004945_colorbar.png}
+			\caption{Colorbar for depth map 004945}
+			\label{fig:colorbar}
+		\end{figure}
+		
+	\item[b)] The bounding box visualizations are stored in "/src/problem2\_analyzing/data/bbox/". A representative example is shown here:
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.5\textwidth]{src/problem2_analyzing/data/bbox/004945_bbox.png}
+			\caption{Bounding box visualization for frame 004945}
+			\label{fig:bbox_visualization}
+		\end{figure}
+		
+		The calculated 3D coordinates for the centers of the bounding boxes are stored in "/src/problem2\_analyzing/data/3d\_coordinates/". Selected examples from frame 004945:
+		
+		\begin{center}
+			\begin{tabular}{|c|c|c|}
+				\hline
+				\textbf{ID} & \textbf{2D coordinates} & \textbf{3D coordinates (meters)} \\
+				\hline
+				3 & [950, 256] & [3.239, 0.791, 6.864] \\
+				1 & [758, 184] & [9.885, 0.742, 48.046] \\
+				1 & [538, 190] & [-3.465, 0.830, 34.943] \\
+				\hline
+			\end{tabular}
+		\end{center}
 \end{enumerate}
 
 \newpage
 \section{Self-driving Detection (Bonus)}
+The results are stored in "/src/problem3\_driving/output/". \\
 Here are the keypoints of the self-driving detection algorithm:
 % two figures
 \begin{figure}[h]

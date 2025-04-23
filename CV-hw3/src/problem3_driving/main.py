@@ -109,6 +109,7 @@ class BoundingBoxesTransform(object):
 		nonplayer_location = np.array([nonplayer.transform.location.x, nonplayer.transform.location.y, nonplayer.transform.location.z])
 		dis = np.linalg.norm(player_location - nonplayer_location)
 		print("\033[1;32mthe distance between player and nonplayer:", dis, "\033[0m")
+		print("z:", nonplayer.transform.location.z)
 		# 生成原始边界框顶点（局部坐标系）
 		bb_cords = BoundingBoxesTransform._create_bb_points(nonplayer)
 		# Try to get transform.location.z first, fallback to extent.z if not available
@@ -403,7 +404,7 @@ def main():
 		success = cv2.imwrite(output_path, result)
 		
 		if success:
-			print(f"Successfully saved image to {output_path}")
+			print(f"\033[1;35mSuccessfully saved image to {output_path}\033[0m")
 		else:
 			print(f"Failed to save image to {output_path}")
 		

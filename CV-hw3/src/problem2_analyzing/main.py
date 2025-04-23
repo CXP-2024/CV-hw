@@ -338,7 +338,7 @@ def solve_question2():
 def main():
     ############    load the data, implement the above three functions and solve the two questions   #######
     # Call the function to solve question 1
-    #solve_question1()
+    solve_question1()
     solve_question2()  
     
     # Question 2 code would go here

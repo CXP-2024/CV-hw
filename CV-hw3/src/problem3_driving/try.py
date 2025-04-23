@@ -115,12 +115,13 @@ class BoundingBoxesTransform(object):
 		try:
 			z_box_local_nonplayer = nonplayer.boundingBox.transform.location.z
 		except (KeyError, AttributeError):
-			z_box_local_nonplayer = 0.0 #nonplayer.boundingBox.extent.z# this means the nonplayer is a pedestrian, so we set it to 0.0
+			z_box_local_nonplayer = 0.0#nonplayer.boundingBox.extent.z# this means the nonplayer is a pedestrian, so we set it to 0.0
 			
 		try:
 			z_box_local_player = player.boundingBox.transform.location.z
 		except (KeyError, AttributeError):
 			z_box_local_player = 0.0
+		print("z_box_local_player: ", z_box_local_player)
 
 		# 获取各坐标系变换参数
 		player_transform = BoundingBoxesTransform._complete_transform(player.get_transform())
