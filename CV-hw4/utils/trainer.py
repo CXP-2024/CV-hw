@@ -45,7 +45,7 @@ class Trainer:
         self.train_loss_history = []
         self.val_loss_history = []
         # self.train_miou_history = [] # Removed mIoU history for training
-        self.val_miou_history = [] # Re-enabled mIoU history for validation
+        # self.val_miou_history = [] # Removed mIoU history for validation
         
     def setup_logging(self):
         """Setup logging configuration."""
@@ -79,7 +79,7 @@ class Trainer:
         
         pbar = tqdm(train_loader, desc=f'Epoch {epoch} [Train]')
         for i, (inputs, targets) in enumerate(pbar):
-            if i > 400: break
+            if i > 10: break
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             
             # Forward pass
@@ -119,23 +119,15 @@ class Trainer:
             
         Returns:
             avg_loss: Average loss for the validation set
-            miou: Mean IoU score for the validation set (based on limited samples)
         """
         self.model.eval()
         running_loss = 0.0
-        # Re-enable confusion matrix for validation
-        confusion_matrix = np.zeros((self.model.module.num_classes if isinstance(self.model, nn.DataParallel) 
-                                   else self.model.num_classes, 
-                                   self.model.module.num_classes if isinstance(self.model, nn.DataParallel) 
-                                   else self.model.num_classes))
-        
-        sample_count = 0  # 计数已处理的样本数量
-        max_samples = 2   # 只使用前两个样本计算混淆矩阵
         
         with torch.no_grad():
             pbar = tqdm(val_loader, desc=f'Epoch {epoch} [Val]')
             for i, (inputs, targets) in enumerate(pbar):
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
+                #if i > 1: break # 只处理前1个batch
                 
                 # Forward pass
                 outputs = self.model(inputs)
@@ -146,27 +138,16 @@ class Trainer:
                 # Update metrics
                 running_loss += loss.item()
                 
-                # 只对前两个样本计算混淆矩阵
-                if sample_count < max_samples:
-                    # Update confusion matrix (Re-enabled for validation)
-                    preds = torch.argmax(outputs, dim=1)
-                    valid = (targets != 255)  # Ignore void regions (255)
-                    for t, p in zip(targets[valid], preds[valid]):
-                        confusion_matrix[t.item(), p.item()] += 1
-                    sample_count += inputs.size(0)  # 更新已处理的样本数
-                
                 # Update progress bar
                 pbar.set_postfix({'loss': loss.item()})
         
         # Calculate metrics
         avg_loss = running_loss / len(val_loader)
-        miou = self.calculate_miou(confusion_matrix) # Re-enabled mIoU calculation for validation
         
         # Update history
         self.val_loss_history.append(avg_loss)
-        self.val_miou_history.append(miou) # Re-enabled mIoU history update for validation
         
-        return avg_loss, miou # Return avg_loss and miou for validation
+        return avg_loss # Return only avg_loss for validation
     
     def train(self, train_loader, val_loader, epochs, start_epoch=0, early_stopping_patience=None):
         """
@@ -183,45 +164,47 @@ class Trainer:
             train_metrics: Dictionary with training metrics
             val_metrics: Dictionary with validation metrics
         """
-        best_val_metric = 0.0 # Changed from best_miou to best_val_metric, will store best mIoU
+        best_val_loss = float('inf') # Changed to track best validation loss (lower is better)
         best_epoch = 0
         patience_counter = 0
         
         self.logger.info(f"Starting training for {epochs} epochs")
         for epoch in range(start_epoch, epochs):
             train_loss = self.train_epoch(train_loader, epoch)
-            val_loss, val_miou = self.validate(val_loader, epoch) # Expect two values now
+            val_loss = self.validate(val_loader, epoch) # Now only returns val_loss
             
-            self.logger.info(f"Epoch {epoch}/{epochs-1} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val mIoU: {val_miou:.4f}")
+            self.logger.info(f"Epoch {epoch}/{epochs-1} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
             
             if self.scheduler:
                 self.scheduler.step(val_loss)
             
-            # Check for improvement (using val_miou)            
-            if val_miou > best_val_metric:
-                best_val_metric = val_miou
+            # Check for improvement (using val_loss - lower is better)            
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
                 best_epoch = epoch
                 # 保存最佳模型
                 torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_model.pth'))
-                self.logger.info(f"New best model saved with mIoU: {best_val_metric:.4f} at epoch {epoch}")
+                self.logger.info(f"New best model saved with Val Loss: {best_val_loss:.4f} at epoch {epoch}")
                 patience_counter = 0
             else:
                 patience_counter += 1
-                # 不再重复保存模型，因为在validate方法中已经保存了
+                self.logger.info(f"No improvement in validation loss for {patience_counter} epochs")
+                torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'latest_model.pth'))
+                self.logger.info(f"Latest model saved at epoch {epoch}")
 
             if early_stopping_patience and patience_counter >= early_stopping_patience:
                 self.logger.info(f"Early stopping triggered at epoch {epoch} due to no improvement for {early_stopping_patience} epochs.")
                 break
         
-        self.logger.info(f"Training completed. Best validation mIoU: {best_val_metric:.4f} at epoch {best_epoch}")
+        self.logger.info(f"Training completed. Best validation loss: {best_val_loss:.4f} at epoch {best_epoch}")
         
         # Store best epoch and metric for reference
         self.best_epoch = best_epoch
-        self.best_metric = best_val_metric # Store best mIoU here
+        self.best_metric = best_val_loss # Store best validation loss here
         
         # Return metrics
         train_metrics = {'loss': self.train_loss_history}
-        val_metrics = {'loss': self.val_loss_history, 'miou': self.val_miou_history} # Include miou history
+        val_metrics = {'loss': self.val_loss_history}
         
         return train_metrics, val_metrics
     
@@ -310,15 +293,14 @@ class Trainer:
         """
         epochs_range = list(range(len(self.train_loss_history)))
         
-        plt.figure(figsize=(20, 10))
+        plt.figure(figsize=(10, 6))
         
         # Plot loss curves
-        plt.subplot(1, 2, 1)
         plt.plot(epochs_range, self.train_loss_history, label='Train')
         plt.plot(epochs_range, self.val_loss_history, label='Validation')
         plt.xlabel('Epochs')
         plt.ylabel('Loss')
-        plt.title('Loss Curves')
+        plt.title('Training and Validation Loss Curves')
         plt.legend()
         plt.grid(True)
         

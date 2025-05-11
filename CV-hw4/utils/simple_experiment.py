@@ -95,7 +95,7 @@ class SimpleExperiment:
         
         return train_loader, val_loader
     
-    def run_simple_experiment(self, num_classes=19, num_epochs=50, criterion=None, optimizer_params=None, early_stopping_patience=10):
+    def run_simple_experiment(self, num_classes=19, num_epochs=50, criterion=None, optimizer_params=None, early_stopping_patience=10, checkpoint_path=None, pretrained_path=None):
         """
         Run experiment with standard train/val split.
         
@@ -105,6 +105,8 @@ class SimpleExperiment:
             criterion: Loss function (default: CrossEntropyLoss with class weights)
             optimizer_params: Parameters for the optimizer
             early_stopping_patience: Number of epochs to wait for improvement before stopping
+            checkpoint_path: Path to checkpoint to resume training from (optional)
+            pretrained_path: Path to pretrained model weights to use as initialization (optional)
             
         Returns:
             results: Dictionary with training and validation results
@@ -125,12 +127,24 @@ class SimpleExperiment:
         # Initialize model
         model = self.model_class(num_classes=num_classes).to(self.device)
         
+        # Load pretrained weights if provided
+        if pretrained_path is not None:
+            self.logger.info(f"Loading pretrained weights from {pretrained_path}")
+            state_dict = torch.load(pretrained_path, map_location=self.device)
+            # Handle both cases: full checkpoint and just model state dict
+            if isinstance(state_dict, dict) and 'model_state_dict' in state_dict:
+                model.load_state_dict(state_dict['model_state_dict'])
+            else:
+                model.load_state_dict(state_dict)
+            self.logger.info("Pretrained weights loaded successfully")
+        
         # Initialize criterion if not provided
         if criterion is None:
             # Handle ignore_index if specified in config
             ignore_index = self.config.get('data', {}).get('ignore_index', 255)
             criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
-          # Initialize optimizer with explicit type conversion
+        
+        # Initialize optimizer with explicit type conversion
         lr = float(optimizer_params.get('lr', 0.001))
         weight_decay = float(optimizer_params.get('weight_decay', 1e-4))
         
@@ -155,19 +169,26 @@ class SimpleExperiment:
             log_dir=self.logs_dir
         )
         
+        # Handle resuming from checkpoint
+        start_epoch = 0
+        if checkpoint_path is not None:
+            self.logger.info(f"Resuming training from checkpoint: {checkpoint_path}")
+            start_epoch = trainer.load_checkpoint(checkpoint_path)
+            self.logger.info(f"Resuming from epoch {start_epoch}")
+        
         # Train model
         train_metrics, val_metrics = trainer.train(
             train_loader=train_loader,
             val_loader=val_loader,
-            epochs=num_epochs,	
+            epochs=num_epochs,
+            start_epoch=start_epoch,
             early_stopping_patience=early_stopping_patience
         )
         
         # Save training history
         history = {
             'train_loss': train_metrics['loss'],
-            'val_loss': val_metrics['loss'],
-            'val_miou': val_metrics['miou']
+            'val_loss': val_metrics['loss']
         }
         
         history_df = pd.DataFrame(history)
@@ -181,6 +202,7 @@ class SimpleExperiment:
         best_model_path = os.path.join(self.models_dir, 'best_model.pth')
         model.load_state_dict(torch.load(best_model_path))
         
+        self.logger.info("开始使用优化的方法评估模型...")
         val_results = evaluate_model(
             model=model,
             dataloader=val_loader,
@@ -188,13 +210,14 @@ class SimpleExperiment:
             num_classes=num_classes,
             ignore_index=self.config.get('data', {}).get('ignore_index', 255)
         )
+        self.logger.info(f"评估完成！mIoU: {val_results['miou']:.4f}, 加权mIoU: {val_results['weighted_miou']:.4f}")
         
         # Generate visualizations
         visualize_predictions(
             model=model,
             dataloader=val_loader,
             device=self.device,
-            num_samples=min(5, len(val_loader)),
+            num_samples=min(2, len(val_loader)),
             save_dir=self.figures_dir
         )
         
@@ -218,9 +241,27 @@ class SimpleExperiment:
             'best_epoch': trainer.best_epoch
         }
         
+        # Convert numpy arrays to lists for JSON serialization
+        def convert_numpy_to_python(obj):
+            if isinstance(obj, dict):
+                return {k: convert_numpy_to_python(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_to_python(i) for i in obj]
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            else:
+                return obj
+        
+        # Convert numpy arrays to Python native types
+        json_serializable_results = convert_numpy_to_python(results)
+        
         results_path = os.path.join(self.logs_dir, 'results.json')
         with open(results_path, 'w') as f:
-            json.dump({k: v for k, v in results.items() if isinstance(v, (int, float, list, dict))}, f, indent=4)
+            json.dump(json_serializable_results, f, indent=4)
         
         self.logger.info(f"Training completed. Best validation mIoU: {trainer.best_metric:.4f} at epoch {trainer.best_epoch}")
         
@@ -228,24 +269,16 @@ class SimpleExperiment:
     
     def plot_training_history(self, history):
         """Plot training history."""
-        plt.figure(figsize=(10, 5))
+        plt.figure(figsize=(10, 6))
         
-        # Plot loss
-        plt.subplot(1, 2, 1)
+        # Plot loss only
         plt.plot(history['train_loss'], label='Train')
         plt.plot(history['val_loss'], label='Validation')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.title('Training and Validation Loss')
         plt.legend()
-        
-        # Plot mIoU
-        plt.subplot(1, 2, 2)
-        plt.plot(history['val_miou'], label='Validation')
-        plt.xlabel('Epoch')
-        plt.ylabel('mIoU')
-        plt.title('Validation mIoU')
-        plt.legend()
+        plt.grid(True)
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.figures_dir, 'training_history.png'))

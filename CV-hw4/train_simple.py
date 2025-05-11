@@ -46,6 +46,22 @@ def main(args):
     
     print(f"Using device: {device}")
     
+    # Check for resume checkpoint
+    checkpoint_path = args.resume
+    resume_training = checkpoint_path != ''
+    if resume_training:
+        print(f"Resuming training from checkpoint: {checkpoint_path}")
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+    
+    # Check for pretrained model
+    pretrained_path = args.pretrained
+    use_pretrained = pretrained_path != ''
+    if use_pretrained:
+        print(f"Using pretrained model weights from: {pretrained_path}")
+        if not os.path.exists(pretrained_path):
+            raise FileNotFoundError(f"Pretrained model file not found: {pretrained_path}")
+    
     # Setup data module
     data_module = CityscapesDataModule(
         data_dir=config['data']['root'],
@@ -85,7 +101,9 @@ def main(args):
             'lr': float(config['training']['lr']),
             'weight_decay': float(config['training']['weight_decay'])
         },
-        early_stopping_patience=int(config['training'].get('early_stopping_patience', 10))
+        early_stopping_patience=int(config['training'].get('early_stopping_patience', 10)),
+        checkpoint_path=args.resume if args.resume else None,
+        pretrained_path=args.pretrained if args.pretrained else None
     )
 
 
@@ -97,7 +115,9 @@ if __name__ == "__main__":
     parser.add_argument('--device', type=str, default='auto', help='Device to use (e.g., cuda, cpu)')
     parser.add_argument('--num_workers', type=int, default=1, help='Number of data loading workers')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
-    parser.add_argument('--epochs', type=int, default=0, help='Number of epochs to train (0 = use config value)')
+    parser.add_argument('--epochs', type=int, default=1, help='Number of epochs to train (0 = use config value)')
+    parser.add_argument('--resume', type=str, default='', help='Path to checkpoint to resume training from')
+    parser.add_argument('--pretrained', type=str, default='', help='Path to pretrained model weights to use as initialization')
     
     args = parser.parse_args()
     main(args)

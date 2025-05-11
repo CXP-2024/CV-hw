@@ -21,8 +21,10 @@ def calculate_miou(confusion_matrix):
         confusion_matrix: Confusion matrix of shape (num_classes, num_classes)
         
     Returns:
-        miou: Mean IoU score
+        miou: Mean IoU score (simple average)
         iou_per_class: IoU for each class
+        weighted_miou: Mean IoU weighted by class pixel frequency
+        class_weights: Weight for each class based on pixel frequency
     """
     # Calculate IoU for each class
     iou_per_class = []
@@ -41,10 +43,40 @@ def calculate_miou(confusion_matrix):
             iou = 0.0
         iou_per_class.append(iou)
     
-    # Calculate mean IoU
+    # Convert to numpy array for easier math operations
+    iou_per_class = np.array(iou_per_class)
+    
+    # Calculate mean IoU (simple average)
     miou = np.mean([iou for iou in iou_per_class if iou > 0])
     
-    return miou, iou_per_class
+    # Calculate class weights based on pixel frequency
+    class_pixels = np.sum(confusion_matrix, axis=1)
+    total_pixels = np.sum(class_pixels)
+    class_weights = class_pixels / total_pixels
+    
+    # Calculate weighted mean IoU
+    # First handle possible NaN values
+    valid_mask = ~np.isnan(iou_per_class)
+    valid_ious = iou_per_class[valid_mask]
+    valid_weights = class_weights[valid_mask]
+    
+    # Calculate weighted average (add small epsilon to avoid division by zero)
+    epsilon = 1e-10
+    weight_sum = np.sum(valid_weights) + epsilon
+    weighted_miou = np.sum(valid_ious * valid_weights) / weight_sum
+    
+    return miou, iou_per_class, weighted_miou, class_weights
+
+def calculate_confusion_matrix(pred, gt, num_classes, ignore_index=255):
+    """Calculate confusion matrix between prediction and ground truth"""
+    mask = (gt != ignore_index)
+    confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
+    
+    for t, p in zip(gt[mask].flatten(), pred[mask].flatten()):
+        confusion_matrix[t, p] += 1
+    
+    return confusion_matrix
+
 
 def evaluate_model(model, dataloader, device, num_classes, ignore_index=255):
     """
@@ -61,7 +93,7 @@ def evaluate_model(model, dataloader, device, num_classes, ignore_index=255):
         Dictionary with evaluation results including confusion_matrix and metrics
     """
     model.eval()
-    confusion_matrix = np.zeros((num_classes, num_classes))
+    confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
     
     with torch.no_grad():
         for inputs, targets in tqdm(dataloader, desc='Evaluating'):
@@ -73,19 +105,38 @@ def evaluate_model(model, dataloader, device, num_classes, ignore_index=255):
             # Get predictions
             preds = torch.argmax(outputs, dim=1)
             
-            # Update confusion matrix
-            valid = (targets != ignore_index)  # Ignore void regions
-            for t, p in zip(targets[valid], preds[valid]):
-                confusion_matrix[t.item(), p.item()] += 1
+            # Move tensors back to CPU for numpy processing
+            preds = preds.cpu().numpy()
+            targets = targets.cpu().numpy()
+            
+            # 高效批量处理所有样本
+            for target, pred in zip(targets, preds):
+                # 使用快速的计算混淆矩阵方法
+                mask = (target != ignore_index)
+                t_flat = target[mask].flatten()
+                p_flat = pred[mask].flatten()
+                
+                # 使用numpy的高效运算更新混淆矩阵
+                if len(t_flat) > 0:
+                    # 确保索引在有效范围内
+                    valid_indices = (t_flat < num_classes) & (p_flat < num_classes)
+                    t_flat = t_flat[valid_indices]
+                    p_flat = p_flat[valid_indices]
+                    
+                    # 使用numpy的直接索引加速
+                    if len(t_flat) > 0:
+                        np.add.at(confusion_matrix, (t_flat, p_flat), 1)
     
-    # Calculate metrics
-    miou, iou_per_class = calculate_miou(confusion_matrix)
+    # Calculate metrics, including weighted mIoU
+    miou, iou_per_class, weighted_miou, class_weights = calculate_miou(confusion_matrix)
     
     # Return results as dictionary
     results = {
         'confusion_matrix': confusion_matrix,
         'miou': miou,
-        'iou_per_class': iou_per_class
+        'weighted_miou': weighted_miou,
+        'iou_per_class': iou_per_class,
+        'class_weights': class_weights
     }
     
     return results
@@ -183,35 +234,80 @@ def visualize_class_performance(confusion_matrix, class_names, save_path='output
         class_names: List of class names
         save_path: Path to save the visualization
     """
-    # Calculate IoU per class
-    iou_per_class = []
-    for i in range(confusion_matrix.shape[0]):
-        tp = confusion_matrix[i, i]
-        fp = confusion_matrix[:, i].sum() - tp
-        fn = confusion_matrix[i, :].sum() - tp
-        
-        # Calculate IoU if the denominator is not zero
-        if tp + fp + fn > 0:
-            iou = tp / (tp + fp + fn)
-        else:
-            iou = 0.0
-        iou_per_class.append(iou)
+    # Calculate IoU and weighted mIoU
+    miou, iou_per_class, weighted_miou, class_weights = calculate_miou(confusion_matrix)
+    iou_per_class = np.array(iou_per_class)  # Convert to numpy array
     
     # Create a figure
     plt.figure(figsize=(15, 8))
     
-    # Plot IoU for each class
-    plt.bar(range(len(iou_per_class)), iou_per_class)
+    # Plot IoU for each class, with bar transparency proportional to class weight
+    bars = plt.bar(range(len(iou_per_class)), iou_per_class, color='skyblue', width=0.6)
+    
+    # Add transparency to bars based on class weights
+    if len(class_weights) > 0 and max(class_weights) > 0:  # Avoid division by zero
+        for i, bar in enumerate(bars):
+            bar.set_alpha(0.3 + 0.7 * class_weights[i] / max(class_weights))
+    
     plt.xticks(range(len(iou_per_class)), class_names, rotation=90)
     plt.xlabel('Class')
     plt.ylabel('IoU')
     plt.title('IoU per Class')
     plt.grid(axis='y')
     
-    # Add mean IoU line
-    miou = np.mean([iou for iou in iou_per_class if iou > 0])
-    plt.axhline(y=miou, color='r', linestyle='-', label=f'Mean IoU: {miou:.4f}')
+    # Add mean IoU and weighted mean IoU lines
+    plt.axhline(y=miou, color='r', linestyle='-', label=f'mIoU (Simple Mean): {miou:.4f}')
+    plt.axhline(y=weighted_miou, color='g', linestyle='--', label=f'wmIoU (Weighted Mean): {weighted_miou:.4f}')
     plt.legend()
+    
+    # Save the figure
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    
+    # Create an additional visualization showing the relationship between class weight and IoU
+    weight_vs_iou_path = os.path.join(os.path.dirname(save_path), "class_weight_vs_iou.png")
+    visualize_class_weight_vs_iou(iou_per_class, class_weights, class_names, miou, weighted_miou, weight_vs_iou_path)
+    
+    return miou, weighted_miou
+
+
+def visualize_class_weight_vs_iou(iou_per_class, class_weights, class_names, miou, weighted_miou, save_path):
+    """
+    Visualize the relationship between class weight and IoU.
+    
+    Args:
+        iou_per_class: IoU for each class
+        class_weights: Weight for each class based on pixel frequency
+        class_names: List of class names
+        miou: Mean IoU (simple average)
+        weighted_miou: Weighted mean IoU
+        save_path: Path to save the visualization
+    """
+    plt.figure(figsize=(12, 8))
+    
+    # Create scatter plot with point size proportional to class weight
+    for i, (iou, weight) in enumerate(zip(iou_per_class, class_weights)):
+        plt.scatter(i, iou, s=weight*5000, alpha=0.6, color='blue')
+        if weight > 0.01:  # Only label classes with significant weight
+            plt.annotate(f"{weight:.3f}", (i, iou), 
+                       textcoords="offset points", xytext=(0,10), ha='center')
+    
+    plt.title('Class Weight vs. IoU')
+    plt.ylabel('IoU')
+    plt.xlabel('Class')
+    plt.xticks(range(len(iou_per_class)), class_names, rotation=90)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.axhline(y=miou, color='r', linestyle='-', label=f'Simple average: {miou:.4f}')
+    plt.axhline(y=weighted_miou, color='g', linestyle='--', label=f'Weighted average: {weighted_miou:.4f}')
+    plt.legend()
+    
+    # Save the figure
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
     
     # Save the figure
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
