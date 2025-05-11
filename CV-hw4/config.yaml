@@ -1,0 +1,21 @@
+device: "cuda"
+model:
+  type: "unet" # unet or deeplabv3
+  n_classes: 19
+  backbone: "resnet"
+data:
+  root: "data"
+  image_size: [512, 1024] # height, width
+  augment: true
+  ignore_index: 255
+training:
+  epochs: 50
+  lr: 1e-3
+  weight_decay: 1e-4
+  batch_size: 4
+  k_folds: 5
+  early_stopping_patience: 10
+output:
+  base_dir: "outputs"
+  save_checkpoints: true
+  save_best_only: false

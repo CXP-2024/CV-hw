@@ -1,0 +1,10 @@
+torch>=1.12
+torchvision
+numpy
+opencv-python
+matplotlib
+pyyaml
+cityscapesscripts
+tqdm
+scikit-learn
+pandas
