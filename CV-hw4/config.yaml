@@ -6,7 +6,7 @@ model:
 data:
   root: "data"
   image_size: [512, 1024] # height, width
-  augment: true
+  augment: false
   ignore_index: 255
 training:
   epochs: 50

@@ -95,7 +95,7 @@ if __name__ == "__main__":
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
     parser.add_argument('--model', type=str, default='unet', choices=['unet', 'deeplabv3'], help='Model to train')
     parser.add_argument('--device', type=str, default='auto', help='Device to use (e.g., cuda, cpu)')
-    parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers')
+    parser.add_argument('--num_workers', type=int, default=1, help='Number of data loading workers')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument('--epochs', type=int, default=0, help='Number of epochs to train (0 = use config value)')
     
