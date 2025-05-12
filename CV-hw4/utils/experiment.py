@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader, SubsetRandomSampler
 from utils.trainer import Trainer
 from utils.visualization import evaluate_model, visualize_predictions, visualize_class_performance, create_confusion_matrix_visualization
 from sklearn.model_selection import KFold
+from utils.losses import LabelSmoothCrossEntropyLoss, DiceLoss, CombinedLoss
 
 class CrossValidationExperiment:
     """Class for running experiments using k-fold cross-validation."""
@@ -179,12 +180,36 @@ class CrossValidationExperiment:
                 else:
                     model.load_state_dict(state_dict)
                 self.logger.info("Pretrained weights loaded successfully")
-            
-            # Initialize criterion if not provided
+              # Initialize criterion if not provided
             if criterion is None:
                 # Handle ignore_index if specified in config
                 ignore_index = self.config.get('data', {}).get('ignore_index', 255)
-                criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
+                
+                # 获取损失函数类型
+                loss_type = self.config.get('training', {}).get('loss', 'cross_entropy')
+                self.logger.info(f"使用损失函数: {loss_type}")
+                
+                if loss_type == 'label_smoothing':
+                    criterion = LabelSmoothCrossEntropyLoss(
+                        smoothing=0.1, 
+                        ignore_index=ignore_index
+                    )
+                    self.logger.info("使用标签平滑交叉熵损失函数，平滑因子=0.1")
+                elif loss_type == 'dice':
+                    criterion = DiceLoss(ignore_index=ignore_index)
+                    self.logger.info("使用Dice损失函数")
+                elif loss_type == 'combined':
+                    criterion = CombinedLoss(
+                        ce_weight=0.6, 
+                        dice_weight=0.4, 
+                        smoothing=0.1, 
+                        ignore_index=ignore_index
+                    )
+                    self.logger.info("使用组合损失函数: 0.6 * CE + 0.4 * Dice")
+                else:
+                    # 默认使用交叉熵损失
+                    criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
+                    self.logger.info("使用标准交叉熵损失函数")
             
             # Initialize optimizer with explicit type conversion
             lr = float(optimizer_params.get('lr', 0.001))
@@ -195,11 +220,27 @@ class CrossValidationExperiment:
                 lr=lr,
                 weight_decay=weight_decay
             )
+              # Initialize scheduler based on config
+            lr_schedule = self.config.get('training', {}).get('lr_schedule', 'plateau')
             
-            # Initialize scheduler
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode='min', factor=0.5, patience=5
-            )
+            if lr_schedule == 'cosine':
+                scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer, T_max=num_epochs, eta_min=lr * 0.01
+                )
+                self.logger.info(f"使用余弦退火学习率调度，初始学习率: {lr}, 最小学习率: {lr * 0.01}")
+            elif lr_schedule == 'onecycle':
+                steps_per_epoch = len(train_loader) 
+                scheduler = optim.lr_scheduler.OneCycleLR(
+                    optimizer, max_lr=lr, total_steps=steps_per_epoch * num_epochs,
+                    pct_start=0.3, anneal_strategy='cos'
+                )
+                self.logger.info(f"使用单循环学习率调度，初始学习率: {lr}, 峰值学习率: {lr}")
+            else:
+                # Default: ReduceLROnPlateau
+                scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                    optimizer, mode='min', factor=0.5, patience=3
+                )
+                self.logger.info(f"使用ReduceLROnPlateau学习率调度，初始学习率: {lr}, 衰减因子: 0.5, 耐心值: 3")
             
             # Initialize trainer
             trainer = Trainer(
@@ -269,7 +310,7 @@ class CrossValidationExperiment:
                 model=model,
                 dataloader=val_loader,
                 device=self.device,
-                num_samples=min(2, len(val_loader)),
+                num_samples=min(3, len(val_loader)),
                 save_dir=fold_figures_dir
             )
             

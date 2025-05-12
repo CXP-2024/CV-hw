@@ -94,12 +94,15 @@ class Trainer:
             # Forward pass
             self.optimizer.zero_grad()
             outputs = self.model(inputs)
-            
-            # Compute loss
+              # Compute loss
             loss = self.criterion(outputs, targets)
             
             # Backward pass and optimize
             loss.backward()
+            
+            # 应用梯度裁剪，防止梯度爆炸
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            
             self.optimizer.step()
             
             # Update metrics
@@ -234,9 +237,10 @@ class Trainer:
         Returns:
             train_metrics: Dictionary with training metrics
             val_metrics: Dictionary with validation metrics
-        """
+        """        
         best_val_loss = float('inf')
         best_val_miou = 0.0  # Track best validation mIoU (higher is better)
+        best_val_weighted_miou = 0.0  # Track best validation weighted mIoU (higher is better)
         best_epoch = 0
         patience_counter = 0
         
@@ -247,40 +251,59 @@ class Trainer:
             
             # Validate
             val_loss, val_miou, val_weighted_miou = self.validate(val_loader, epoch)
-            
-            # Log metrics
+              # Log metrics
             self.logger.info(f"Epoch {epoch}/{epochs-1} - Train Loss: {train_loss:.4f}, Train mIoU: {train_miou:.4f}, Train wIoU: {train_weighted_miou:.4f}")
             self.logger.info(f"Epoch {epoch}/{epochs-1} - Val Loss: {val_loss:.4f}, Val mIoU: {val_miou:.4f}, Val wIoU: {val_weighted_miou:.4f}")
             
+            # 调整学习率，根据调度器类型
             if self.scheduler:
-                self.scheduler.step(val_loss)  # Adjust learning rate based on validation loss
-            
-            # Check for improvement (now considering both val_loss and val_miou)
+                # 如果是CosineAnnealingLR或OneCycleLR，则每个epoch更新一次
+                if isinstance(self.scheduler, (torch.optim.lr_scheduler.CosineAnnealingLR, 
+                                             torch.optim.lr_scheduler.OneCycleLR)):
+                    self.scheduler.step()
+                    current_lr = self.optimizer.param_groups[0]['lr']
+                    self.logger.info(f"学习率更新为: {current_lr:.6f}")
+                else:
+                    # ReduceLROnPlateau需要根据验证指标更新
+                    self.scheduler.step(val_loss)
+                    
+            # 检查改进情况 (同时考虑val_miou和val_loss)
             improved = False
             
-            # Save if validation loss improves
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                improved = True
-                self.logger.info(f"New best validation loss: {best_val_loss:.4f}")
-            
-            # Or save if validation mIoU improves
+            # 主要根据mIoU来判断改进，这是分割任务的主要指标
             if val_miou > best_val_miou:
                 best_val_miou = val_miou
                 best_epoch = epoch
                 improved = True
-                # Save the best model
+                # 保存最佳mIoU模型
                 torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_model.pth'))
-                self.logger.info(f"New best model saved with Val mIoU: {best_val_miou:.4f} at epoch {epoch}")
+                self.logger.info(f"新的最佳mIoU模型已保存: {best_val_miou:.4f} (第 {epoch} 轮)")
+              # 如果验证损失也有改进，记录下来，但不作为主要判断标准
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                self.logger.info(f"新的最佳验证损失: {best_val_loss:.4f}")
+                # 只在mIoU没有改进的情况下，才考虑损失改进作为总体改进的依据
+                if not improved:
+                    improved = True
+                    self.logger.info(f"根据验证损失改进判定为有进步")
+            
+            # 保存如果加权mIoU有改进
+            if val_weighted_miou > best_val_weighted_miou:
+                best_val_weighted_miou = val_weighted_miou
+                improved = True
+                # 保存最佳加权mIoU模型
+                torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_weighted_iou_model.pth'))
+                self.logger.info(f"新的最佳加权IoU模型已保存: {best_val_weighted_miou:.4f} (第 {epoch} 轮)")
             
             if improved:
                 patience_counter = 0
             else:
                 patience_counter += 1
                 self.logger.info(f"No improvement in validation metrics for {patience_counter} epochs")
-                # Still save the latest model
-                torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'latest_model.pth'))
-                self.logger.info(f"Latest model saved at epoch {epoch}")
+                
+            # Always save the latest model
+            torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'latest_model.pth'))
+            self.logger.info(f"Latest model saved at epoch {epoch}")
 
             if early_stopping_patience and patience_counter >= early_stopping_patience:
                 self.logger.info(f"Early stopping triggered at epoch {epoch} due to no improvement for {early_stopping_patience} epochs.")

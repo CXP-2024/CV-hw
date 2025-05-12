@@ -3,3 +3,4 @@ CitySpaces/
 data/
 outputs/
 *.zip
+.autodl/

@@ -6,15 +6,17 @@ model:
 data:
   root: "data"
   image_size: [512, 1024] # height, width
-  augment: false
+  augment: true
   ignore_index: 255
 training:
-  epochs: 1
-  lr: 1e-3
-  weight_decay: 1e-4
+  epochs: 20
+  lr: 2e-4  # 降低学习率
+  weight_decay: 5e-4  # 增加权重衰减
   batch_size: 4
-  k_folds: 5
-  early_stopping_patience: 10
+  k_folds: 3
+  early_stopping_patience: 8  # 增加早停耐心值
+  lr_schedule: "cosine"  # 使用余弦退火学习率调度
+  loss: "combined"  # 使用组合损失函数
 output:
   base_dir: "outputs"
   save_checkpoints: true

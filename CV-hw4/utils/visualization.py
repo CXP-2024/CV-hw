@@ -112,23 +112,22 @@ def evaluate_model(model, dataloader, device, num_classes, ignore_index=255):
             preds = preds.cpu().numpy()
             targets = targets.cpu().numpy()
             
-            # 高效批量处理所有样本
-            for target, pred in zip(targets, preds):
-                # 使用快速的计算混淆矩阵方法
-                mask = (target != ignore_index)
-                t_flat = target[mask].flatten()
-                p_flat = pred[mask].flatten()
-                
-                # 使用numpy的高效运算更新混淆矩阵
-                if len(t_flat) > 0:
-                    # 确保索引在有效范围内
-                    valid_indices = (t_flat < num_classes) & (p_flat < num_classes)
-                    t_flat = t_flat[valid_indices]
-                    p_flat = p_flat[valid_indices]
-                    
-                    # 使用numpy的直接索引加速
-                    if len(t_flat) > 0:
-                        np.add.at(confusion_matrix, (t_flat, p_flat), 1)
+            # 高效批量处理整个批次的所有样本
+            # 创建有效数据的掩码 (批次中所有样本)
+            mask = (targets != ignore_index)
+            
+            # 仅处理有效数据点
+            valid_targets = targets[mask].flatten()
+            valid_preds = preds[mask].flatten()
+            
+            # 进一步确保索引在有效范围内
+            valid_indices = (valid_targets < num_classes) & (valid_preds < num_classes)
+            valid_targets = valid_targets[valid_indices]
+            valid_preds = valid_preds[valid_indices]
+            
+            # 如果有有效数据点，一次性更新混淆矩阵
+            if len(valid_targets) > 0:
+                np.add.at(confusion_matrix, (valid_targets, valid_preds), 1)
     
     # Calculate metrics, including weighted mIoU
     miou, iou_per_class, weighted_miou, class_weights = calculate_miou(confusion_matrix)
@@ -312,11 +311,6 @@ def visualize_class_weight_vs_iou(iou_per_class, class_weights, class_names, mio
     plt.savefig(save_path)
     plt.close()
     
-    # Save the figure
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
 
 def create_confusion_matrix_visualization(confusion_matrix, class_names, 
                                          save_path='outputs/figures/confusion_matrix.png'):

@@ -217,7 +217,7 @@ class SimpleExperiment:
             model=model,
             dataloader=val_loader,
             device=self.device,
-            num_samples=min(2, len(val_loader)),
+            num_samples=min(3, len(val_loader)),
             save_dir=self.figures_dir
         )
         

@@ -15,7 +15,6 @@ from torchvision import transforms
 import glob
 from pathlib import Path
 import seaborn as sns
-import pandas as pd
 
 
 # Import custom modules
@@ -128,11 +127,22 @@ def create_color_overlay(image, segmentation, class_colors):
 
 def calculate_confusion_matrix(pred, gt, num_classes, ignore_index=255):
     """Calculate confusion matrix between prediction and ground truth"""
+    # 创建有效数据的掩码
     mask = (gt != ignore_index)
-    confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
     
-    for t, p in zip(gt[mask].flatten(), pred[mask].flatten()):
-        confusion_matrix[t, p] += 1
+    # 提取有效的目标和预测值
+    valid_targets = gt[mask].flatten()
+    valid_preds = pred[mask].flatten()
+    
+    # 确保索引在有效范围内
+    valid_indices = (valid_targets < num_classes) & (valid_preds < num_classes)
+    valid_targets = valid_targets[valid_indices]
+    valid_preds = valid_preds[valid_indices]
+    
+    # 创建混淆矩阵并一次性填充
+    confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
+    if len(valid_targets) > 0:
+        np.add.at(confusion_matrix, (valid_targets, valid_preds), 1)
     
     return confusion_matrix
 
@@ -194,7 +204,10 @@ def main(args):
     # First process all images to calculate mIoU
     print("Processing all images for mIoU calculation...")
     import tqdm
+    #i = 0
     for image_path in tqdm.tqdm(test_images, desc='Processing images'):
+        #i += 1
+        #if i > 5: break	# For testing, limit to first 5 images
         
         # Get ground truth
         ground_truth = get_ground_truth(image_path, val_gt_dir)
@@ -204,161 +217,312 @@ def main(args):
         
         # Update confusion matrix
         confusion_matrix += calculate_confusion_matrix(prediction, ground_truth, num_classes)
-    
-    # Calculate mIoU
-    miou, class_iou, class_weights, iou_df = calculate_miou(confusion_matrix)
-    
-    # Print results
-    print(f"Overall mIoU: {miou:.4f}")
-    
-    # Save results to file
-    with open(os.path.join(args.output_dir, 'results.txt'), 'w') as f:
-        f.write(f"Overall mIoU: {miou:.4f}\n\n")
-        f.write("Per-class IoU:\n")
-        for i, iou in enumerate(class_iou):
-            name = class_iou.index[i] if hasattr(class_iou, 'index') else f"Class {i}"
-            f.write(f"{name}: {iou:.4f}\n")
-    
-    # Create and save per-class IoU plot
-    plt.figure(figsize=(15, 8))
-    ax = sns.barplot(x=class_iou.index if hasattr(class_iou, 'index') else range(len(class_iou)), 
-                     y=class_iou.values)
-    plt.title('IoU per Class')
-    plt.xlabel('Class')
-    plt.ylabel('IoU')
-    plt.xticks(rotation=90)
-    plt.tight_layout()
-    plt.savefig(os.path.join(args.output_dir, 'per_class_iou.png'))
-    
-    # Create a figure to show class weights vs IoU
-    plt.figure(figsize=(15, 8))
-    if hasattr(class_iou, 'index'):
-        # Create a DataFrame for visualization
-        viz_df = pd.DataFrame({
-            'class': class_iou.index,
-            'iou': class_iou.values,
-            'weight': class_weights
-        })
-        
-        # Sort by class weight
-        viz_df = viz_df.sort_values('weight', ascending=False)
-        
-        # Create bar plot
-        ax = sns.barplot(x='class', y='weight', data=viz_df, color='blue', alpha=0.5, label='Weight')
-        ax2 = ax.twinx()
-        sns.barplot(x='class', y='iou', data=viz_df, color='red', alpha=0.5, label='IoU', ax=ax2)
-    else:
-        # Simple plot if we don't have class names
-        ax = plt.subplot(111)
-        ax.bar(range(len(class_weights)), class_weights, alpha=0.5, label='Weight', color='blue')
-        ax2 = ax.twinx()
-        ax2.bar(range(len(class_iou)), class_iou, alpha=0.5, label='IoU', color='red')
-    
-    ax.set_ylabel('Class Weight')
-    ax2.set_ylabel('IoU')
-    ax.set_title('Class Weight vs IoU')
-    ax.legend(loc='upper left')
-    ax2.legend(loc='upper right')
-    plt.tight_layout()
-    plt.savefig(os.path.join(args.output_dir, 'class_weight_vs_iou.png'))
-    
-    # Create and save confusion matrix visualization
-    plt.figure(figsize=(15, 15))
-    # Normalize confusion matrix
-    row_sums = confusion_matrix.sum(axis=1, keepdims=True)
-    norm_confusion_matrix = confusion_matrix.astype('float') / (row_sums + 1e-10)
-    
-    sns.heatmap(norm_confusion_matrix, cmap='Blues', annot=False)
-    plt.title('Normalized Confusion Matrix')
-    plt.xlabel('Predicted')
-    plt.ylabel('True')
-    plt.savefig(os.path.join(args.output_dir, 'confusion_matrix.png'))
-    
-    # Also save the full confusion matrix without normalization
-    plt.figure(figsize=(15, 15))
-    sns.heatmap(confusion_matrix, cmap='Blues', annot=False)
-    plt.title('Confusion Matrix')
-    plt.xlabel('Predicted')
-    plt.ylabel('True')
-    plt.savefig(os.path.join(args.output_dir, 'full_confusion_matrix.png'))
-    
-    # Now generate and save visualizations
-    print("Generating visualizations...")
-    
-    # Visualization of class colors
-    from datasets.cityscapes import get_class_names
-    class_names = get_class_names()
-    
-    # Create a color legend
-    plt.figure(figsize=(15, 8))
-    color_patches = [plt.Rectangle((0, 0), 1, 1, fc=np.array(class_colors[i])/255) for i in range(len(class_names))]
-    plt.legend(color_patches, class_names, loc='center', ncol=3)
-    plt.axis('off')
-    plt.savefig(os.path.join(args.output_dir, 'class_legend.png'))
-    plt.close()
-    
-    # Create a color palette image
-    palette_img = np.zeros((100, len(class_names)*30, 3), dtype=np.uint8)
-    for i, color in enumerate(class_colors.values()):
-        palette_img[:, i*30:(i+1)*30, :] = color
-    plt.figure(figsize=(15, 2))
-    plt.imshow(palette_img)
-    plt.axis('off')
-    plt.savefig(os.path.join(args.output_dir, 'class_palette.png'))
-    plt.close()
-    
-    # Process and save visualization images
+
+    # Then create visualizations for the first 30 images
+    print("\nCreating visualizations for the first images...")
     for i, image_path in enumerate(visualization_images):
+        print(f"Creating visualization {i+1}/{len(visualization_images)}: {Path(image_path).name}")
+        
         # Get ground truth
         ground_truth = get_ground_truth(image_path, val_gt_dir)
         
         # Predict with DeepLabV3Plus
-        original_image, prediction = predict_image(deeplabv3plus_model, image_path, transform, device)
+        image, prediction = predict_image(deeplabv3plus_model, image_path, transform, device)
         
-        # Create figure with 3 subplots (original, ground truth, prediction)
-        plt.figure(figsize=(15, 5))
+        # Create overlay
+        gt_overlay = create_color_overlay(image, ground_truth, class_colors)
+        pred_overlay = create_color_overlay(image, prediction, class_colors)
         
-        # Original image
+        # Create visualization
+        plt.figure(figsize=(15, 10))
+        
         plt.subplot(1, 3, 1)
-        plt.imshow(original_image)
-        plt.title('Original Image')
+        plt.imshow(image)
+        plt.title('(Original Image)')
         plt.axis('off')
         
-        # Ground truth
         plt.subplot(1, 3, 2)
-        gt_color = np.zeros((ground_truth.shape[0], ground_truth.shape[1], 3), dtype=np.uint8)
-        for label_id, color in class_colors.items():
-            mask = (ground_truth == label_id)
-            gt_color[mask] = color
-        plt.imshow(gt_color)
-        plt.title('Ground Truth')
+        plt.imshow(gt_overlay)
+        plt.title('(Ground Truth)')
         plt.axis('off')
         
-        # Prediction
         plt.subplot(1, 3, 3)
-        pred_color = np.zeros((prediction.shape[0], prediction.shape[1], 3), dtype=np.uint8)
-        for label_id, color in class_colors.items():
-            mask = (prediction == label_id)
-            pred_color[mask] = color
-        plt.imshow(pred_color)
-        plt.title('DeepLabV3Plus Prediction')
+        plt.imshow(pred_overlay)
+        plt.title('(DeepLabV3+ Prediction)')
         plt.axis('off')
         
-        # Save figure
+        # Save visualization
+        output_path = os.path.join(args.output_dir, f"sample_{i+1}.png")
         plt.tight_layout()
-        plt.savefig(os.path.join(args.output_dir, f'sample_{i+1}.png'))
+        plt.savefig(output_path)
         plt.close()
+        
+        print(f"Visualization saved to {output_path}")
     
-    print(f"Results saved to {args.output_dir}")
+    # Calculate mIoU
+    miou, iou_per_class, weighted_miou, class_weights = calculate_miou(confusion_matrix)
+        
+    # Convert iou_per_class to numpy array for further processing
+    iou_per_class = np.array(iou_per_class)
+    
+    # Calculate class weights based on pixel frequency
+    class_pixels = np.sum(confusion_matrix, axis=1)
+    total_pixels = np.sum(class_pixels)
+    class_weights = class_pixels / total_pixels
+    
+    # Calculate weighted average IoU
+    # First handle possible NaN values
+    valid_mask = ~np.isnan(iou_per_class)
+    valid_ious = iou_per_class[valid_mask]
+    valid_weights = class_weights[valid_mask]
+    
+    # Calculate weighted average (add small epsilon to avoid division by zero)
+    epsilon = 1e-10
+    weight_sum = np.sum(valid_weights) + epsilon
+    weighted_miou = np.sum(valid_ious * valid_weights) / weight_sum
+    
+    # Print results
+    print("\n===== Results =====")
+    print(f"DeepLabV3+ mIoU (Simple Average): {miou:.4f}")
+    print(f"DeepLabV3+ weighted mIoU (Weighted Average): {weighted_miou:.4f}")
+    
+    # Get class names and colors from cityscapes module
+    from datasets.cityscapes import get_class_names, get_class_colors
+    class_names = get_class_names()
+    class_colors_dict = get_class_colors()
+    
+    print(f"Loaded {len(class_names)} class names: {class_names}")
+        
+    # Display class names, IDs, colors and metrics
+    print("\n===== Class Information =====")
+    print(f"{'ID':<5}{'Class Name':<30}{'Weight':<10}{'IoU':<10}{'Color':<15}")
+    print("-" * 70)
+    
+    for i in range(num_classes):
+        if i in class_colors_dict:
+            color_str = f"RGB{class_colors_dict[i]}"
+            class_name = class_names[i] if i < len(class_names) else f"Class {i}"
+            weight = class_weights[i] if i < len(class_weights) else 0
+            iou = iou_per_class[i] if i < len(iou_per_class) else 0
+            print(f"{i:<5}{class_name:<30}{weight:<10.4f}{iou:<10.4f}{color_str:<15}")
+    
+    # Create per-class IoU bar chart
+    plt.figure(figsize=(15, 8))
+    # Plot bar chart with width related to class weight
+    bars = plt.bar(range(len(iou_per_class)), iou_per_class, color='skyblue', 
+             width=0.6)
+    
+    # Add class weight as transparency (more intuitive visualization of each class importance)
+    for i, bar in enumerate(bars):
+        bar.set_alpha(0.3 + 0.7 * class_weights[i] / max(class_weights))
+    
+    plt.title('DeepLabV3+ - Each Class IoU (Per-class IoU)')
+    plt.ylabel('IoU')
+    plt.xlabel('(Class)')
+    plt.xticks(range(len(iou_per_class)), class_names, rotation=90)
+    plt.grid(axis='y')
+    plt.axhline(y=miou, color='r', linestyle='-', label=f'mIoU (Simple Mean): {miou:.4f}')
+    plt.axhline(y=weighted_miou, color='g', linestyle='--', label=f'wmIoU (Weighted Mean): {weighted_miou:.4f}')
+    plt.legend()
+    
+    # Save chart
+    iou_chart_path = os.path.join(args.output_dir, "per_class_iou.png")
+    plt.tight_layout()
+    plt.savefig(iou_chart_path)
+    plt.close()
+    
+    print(f"Per-class IoU chart saved to {iou_chart_path}")
+    
+    # Create additional chart: class weight vs IoU relationship
+    plt.figure(figsize=(12, 8))
+    # Scatter plot with point size proportional to class weight
+    for i, (iou, weight) in enumerate(zip(iou_per_class, class_weights)):
+        plt.scatter(i, iou, s=weight*5000, alpha=0.6, color='blue')
+        if weight > 0.01:  # Only label more important classes
+            plt.annotate(f"{weight:.3f}", (i, iou), 
+                         textcoords="offset points", xytext=(0,10), ha='center')
+    
+    plt.title('(Class Weight vs. IoU)')
+    plt.ylabel('IoU')
+    plt.xlabel('(Class)')
+    plt.xticks(range(len(iou_per_class)), class_names, rotation=90)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.axhline(y=miou, color='r', linestyle='-', label=f'Simple average: {miou:.4f}')
+    plt.axhline(y=weighted_miou, color='g', linestyle='--', label=f'Weighted average: {weighted_miou:.4f}')
+    plt.legend()
+    
+    # Save chart
+    weight_chart_path = os.path.join(args.output_dir, "class_weight_vs_iou.png")
+    plt.tight_layout()
+    plt.savefig(weight_chart_path)
+    plt.close()
+    
+    print(f"Class weight vs. IoU chart saved to {weight_chart_path}")
+    
+    # Create a normalized confusion matrix visualization
+    plt.figure(figsize=(14, 12))
+    
+    # Normalize confusion matrix to show percentages instead of raw counts
+    norm_confusion_matrix = confusion_matrix.astype('float') / (confusion_matrix.sum(axis=1)[:, np.newaxis] + 1e-10)
+    
+    # Plot the confusion matrix using seaborn for better visualization
+    mask = np.zeros_like(norm_confusion_matrix)
+    for i in range(num_classes):
+        if class_pixels[i] == 0:  # Mask out classes with no pixels (to avoid division by zero warnings)
+            mask[i, :] = 1
+    
+    # Plot confusion matrix only for the most significant classes (top 10 by pixel count)
+    if num_classes > 10:
+        # Get indices of top 10 classes by pixel count
+        top_class_indices = np.argsort(class_pixels)[::-1][:10]
+        
+        # Extract the submatrix for top classes
+        cm_subset = norm_confusion_matrix[np.ix_(top_class_indices, top_class_indices)]
+        
+        # Get corresponding class names
+        top_class_names = [class_names[i] if i < len(class_names) else f"Class {i}" for i in top_class_indices]
+        
+        # Plot the subset confusion matrix
+        sns.heatmap(cm_subset, annot=True, fmt='.2f', cmap='Blues', 
+                   xticklabels=top_class_names, yticklabels=top_class_names)
+        plt.title('Top 10 Classes Normalized Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        
+        # Add note about showing only top classes
+        plt.figtext(0.5, 0.01, f"Note: Only top 10 classes by pixel count are shown (out of {num_classes} total)",
+                   ha='center', fontsize=10, style='italic')
+    else:
+        # If we have 10 or fewer classes, just show the full confusion matrix
+        sns.heatmap(norm_confusion_matrix, annot=True, fmt='.2f', cmap='Blues',
+                   xticklabels=class_names, yticklabels=class_names, 
+                   mask=mask)
+        plt.title('Normalized Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+    
+    # Save visualization
+    conf_matrix_path = os.path.join(args.output_dir, "confusion_matrix.png")
+    plt.tight_layout()
+    plt.savefig(conf_matrix_path)
+    plt.close()
+    
+    print(f"Confusion matrix visualization saved to {conf_matrix_path}")
+    
+    # Create a full confusion matrix visualization (if there are many classes)
+    if num_classes > 10:
+        plt.figure(figsize=(20, 18))
+        sns.heatmap(norm_confusion_matrix, annot=False, cmap='Blues',
+                   xticklabels=class_names, yticklabels=class_names, 
+                   mask=mask)
+        plt.title('Full Normalized Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        
+        # Save full visualization
+        full_conf_matrix_path = os.path.join(args.output_dir, "full_confusion_matrix.png") 
+        plt.tight_layout()
+        plt.savefig(full_conf_matrix_path)
+        plt.close()
+        
+        print(f"Full confusion matrix visualization saved to {full_conf_matrix_path}")
+    
+    # Save results to text file
+    results_path = os.path.join(args.output_dir, "results.txt")
+    with open(results_path, 'w') as f:
+        f.write("===== DeepLabV3+测试结果 (Test Results) =====\n")
+        f.write(f"DeepLabV3+简单平均IoU (Simple Mean IoU): {miou:.4f}\n")
+        f.write(f"DeepLabV3+加权平均IoU (Weighted Mean IoU): {weighted_miou:.4f}\n")
+        f.write(f"混淆矩阵可视化 (Confusion Matrix): 请查看 confusion_matrix.png 和 full_confusion_matrix.png\n")
+        f.write("\n")
+        f.write("类别信息 (Class Information):\n")
+        f.write(f"{'ID':<5}{'名称 (Name)':<30}{'权重 (Weight)':<15}{'IoU':<10}{'颜色 (Color)':<15}\n")
+        f.write("-" * 75 + "\n")
+        for i in range(num_classes):
+            if i in class_colors_dict:
+                color_str = f"RGB{class_colors_dict[i]}"
+                class_name = class_names[i] if i < len(class_names) else f"Class {i}"
+                weight = class_weights[i] if i < len(class_weights) else 0
+                iou = iou_per_class[i] if i < len(iou_per_class) else 0
+                f.write(f"{i:<5}{class_name:<30}{weight:<15.4f}{iou:<10.4f}{color_str:<15}\n")
+        f.write("\n")
+        f.write(f"测试图像总数 (Total images tested): {len(test_images)}\n")
+        f.write("可视化图像 (Visualized images):\n")
+        for i, path in enumerate(visualization_images):
+            if i < 10:  # Only list first 10 visualized images to keep it concise
+                f.write(f"{i+1}. {Path(path).name}\n")
+        if len(visualization_images) > 10:
+            f.write(f"...and {len(visualization_images) - 10} more images\n")
+    
+    print(f"Results saved to {results_path}")
+    
+    # Create a class legend image
+    plt.figure(figsize=(15, num_classes * 0.5))
+    for i in range(num_classes):
+        if i in class_colors_dict:
+            color = [c/255.0 for c in class_colors_dict[i]]  # Convert RGB values to 0-1 range
+            plt.fill_between([0, 1], [i+0.8, i+0.8], [i+0.2, i+0.2], color=color)
+            plt.text(1.1, i+0.5, f"{i}: {class_names[i]}", va='center', fontsize=10)
+    
+    plt.xlim(0, 5)
+    plt.ylim(0, num_classes)
+    plt.axis('off')
+    plt.title('Class Legend - ID: Class Name')
+    
+    # Save legend image
+    legend_path = os.path.join(args.output_dir, "class_legend.png")
+    plt.tight_layout()
+    plt.savefig(legend_path)
+    plt.close()
+    
+    print(f"Class legend saved to {legend_path}")
+    
+    # Create a color palette visualization
+    palette_size = 64  # Size of each color square
+    num_cols = 3  # Number of columns in the grid
+    num_rows = (num_classes + num_cols - 1) // num_cols  # Calculate number of rows
+    
+    # Create the image
+    palette_img = np.ones((num_rows * palette_size, num_cols * palette_size * 3, 3), dtype=np.uint8) * 255
+    
+    for i in range(num_classes):
+        if i in class_colors_dict:
+            row = i // num_cols
+            col = i % num_cols
+            
+            # Calculate position for color square
+            y_start = row * palette_size
+            y_end = (row + 1) * palette_size
+            x_start = col * palette_size * 3
+            x_end = (col * 3 + 1) * palette_size
+            
+            # Fill color square
+            color_rgb = np.array(class_colors_dict[i], dtype=np.uint8)
+            palette_img[y_start:y_end, x_start:x_end, :] = color_rgb
+            
+            # Add text with class ID and name
+            from PIL import Image, ImageDraw, ImageFont
+            img = Image.fromarray(palette_img)
+            draw = ImageDraw.Draw(img)
+            text_pos = (x_end + 10, y_start + palette_size // 2 - 10)
+            draw.text(text_pos, f"{i}: {class_names[i]}", fill=(0, 0, 0))
+            palette_img = np.array(img)
+    
+    # Save the palette image
+    palette_path = os.path.join(args.output_dir, "class_palette.png")
+    Image.fromarray(palette_img).save(palette_path)
+    
+    print(f"Class color palette saved to {palette_path}")
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Test DeepLabV3Plus model on Cityscapes dataset")
-    parser.add_argument('--config', type=str, default='config.yaml', help='Path to configuration file')
-    parser.add_argument('--checkpoint', type=str, required=True, help='Path to model checkpoint')
-    parser.add_argument('--output-dir', type=str, default='outputs/deeplabv3plus_test_results', help='Output directory for results')
-    parser.add_argument('--device', type=str, default='auto', help='Device to use (cuda, cpu, or auto)')
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Test DeepLabV3+ model on random samples and calculate mIoU")
+    
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
+    parser.add_argument('--checkpoint', type=str, required=True, help='Path to DeepLabV3+ model checkpoint')
+    parser.add_argument('--output_dir', type=str, default='outputs/deeplabv3plus_test_results', help='Output directory for results')
+    parser.add_argument('--device', type=str, default='auto', help='Device to use (e.g., cuda, cpu)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
-    args = parser.parse_args()
     
+    args = parser.parse_args()
     main(args)
