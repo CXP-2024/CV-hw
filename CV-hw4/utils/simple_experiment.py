@@ -147,16 +147,36 @@ class SimpleExperiment:
         # Initialize optimizer with explicit type conversion
         lr = float(optimizer_params.get('lr', 0.001))
         weight_decay = float(optimizer_params.get('weight_decay', 1e-4))
-        
         optimizer = optim.Adam(
             model.parameters(),
             lr=lr,
             weight_decay=weight_decay
         )
-          # Initialize scheduler
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=5
-        )
+        
+        # Initialize scheduler based on config
+        lr_schedule = self.config.get('training', {}).get('lr_schedule', 'plateau')
+        
+        if lr_schedule == 'cosine':
+            # 使用普通余弦退火
+            T_max = num_epochs  # 周期设为总epochs数
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=T_max, eta_min=1e-6
+            )
+            self.logger.info(f"使用余弦退火学习率调度器，周期T_max={T_max}")
+        elif lr_schedule == 'warmrestart':
+            # 使用带热重启的余弦退火
+            T_0 = self.config.get('training', {}).get('lr_warmrestart_T0', 10)  # 第一次重启的周期
+            T_mult = self.config.get('training', {}).get('lr_warmrestart_T_mult', 2)  # 每次重启后周期乘数
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=T_0, T_mult=T_mult, eta_min=1e-6
+            )
+            self.logger.info(f"使用带热重启的余弦退火学习率调度器，T_0={T_0}, T_mult={T_mult}")
+        else:
+            # 默认使用ReduceLROnPlateau
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', factor=0.5, patience=5
+            )
+            self.logger.info("使用ReduceLROnPlateau学习率调度器")
         
         # Initialize trainer
         trainer = Trainer(

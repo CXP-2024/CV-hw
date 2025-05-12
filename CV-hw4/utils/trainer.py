@@ -243,9 +243,12 @@ class Trainer:
         best_val_weighted_miou = 0.0  # Track best validation weighted mIoU (higher is better)
         best_epoch = 0
         patience_counter = 0
-        
         self.logger.info(f"Starting training for {epochs} epochs")
         for epoch in range(start_epoch, epochs):
+            # 显示当前学习率
+            current_lr = self.optimizer.param_groups[0]['lr']
+            self.logger.info(f"Epoch {epoch}/{epochs-1} - 当前学习率: {current_lr:.6f}")
+            
             # Train for one epoch
             train_loss, train_miou, train_weighted_miou = self.train_epoch(train_loader, epoch)
             

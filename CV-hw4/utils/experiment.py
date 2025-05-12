@@ -219,8 +219,7 @@ class CrossValidationExperiment:
                 model.parameters(),
                 lr=lr,
                 weight_decay=weight_decay
-            )
-              # Initialize scheduler based on config
+            )            # Initialize scheduler based on config
             lr_schedule = self.config.get('training', {}).get('lr_schedule', 'plateau')
             
             if lr_schedule == 'cosine':
@@ -228,6 +227,14 @@ class CrossValidationExperiment:
                     optimizer, T_max=num_epochs, eta_min=lr * 0.01
                 )
                 self.logger.info(f"使用余弦退火学习率调度，初始学习率: {lr}, 最小学习率: {lr * 0.01}")
+            elif lr_schedule == 'warmrestart':
+                # 使用带热重启的余弦退火
+                T_0 = self.config.get('training', {}).get('lr_warmrestart_T0', 10)  # 第一次重启的周期
+                T_mult = self.config.get('training', {}).get('lr_warmrestart_T_mult', 2)  # 每次重启后周期乘数
+                scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                    optimizer, T_0=T_0, T_mult=T_mult, eta_min=1e-6
+                )
+                self.logger.info(f"使用带热重启的余弦退火学习率调度器，T_0={T_0}, T_mult={T_mult}, 初始学习率: {lr}")
             elif lr_schedule == 'onecycle':
                 steps_per_epoch = len(train_loader) 
                 scheduler = optim.lr_scheduler.OneCycleLR(
