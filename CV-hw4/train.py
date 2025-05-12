@@ -13,6 +13,7 @@ from datetime import datetime
 from datasets import CityscapesDataModule, num_classes
 from models.unet import UNet
 from models.deeplabv3 import DeepLabV3
+from models.deeplabv3plus import DeepLabV3Plus
 from utils.experiment import CrossValidationExperiment
 
 def set_seed(seed):
@@ -83,6 +84,8 @@ def main(args):
         model_class = UNet
     elif args.model.lower() == 'deeplabv3':
         model_class = DeepLabV3
+    elif args.model.lower() == 'deeplabv3plus':
+        model_class = DeepLabV3Plus
     else:
         raise ValueError(f"Unsupported model: {args.model}")
     
@@ -116,11 +119,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train semantic segmentation models using k-fold cross-validation")
     
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
-    parser.add_argument('--model', type=str, default='deeplabv3', choices=['unet', 'deeplabv3'], help='Model to train')
+    parser.add_argument('--model', type=str, default='deeplabv3plus', choices=['unet', 'deeplabv3', 'deeplabv3plus'], help='Model to train')
     parser.add_argument('--device', type=str, default='auto', help='Device to use (e.g., cuda, cpu)')
     parser.add_argument('--num_workers', type=int, default=1, help='Number of data loading workers')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
-    parser.add_argument('--epochs', type=int, default=0, help='Number of epochs to train (0 = use config value)')
+    parser.add_argument('--epochs', type=int, default=1, help='Number of epochs to train (0 = use config value)')
     parser.add_argument('--k_folds', type=int, default=0, help='Number of folds for cross-validation (0 = use config value)')
     parser.add_argument('--resume', type=str, default='', help='Path to checkpoint to resume training from')
     parser.add_argument('--pretrained', type=str, default='', help='Path to pretrained model weights to use as initialization')

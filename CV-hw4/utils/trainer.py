@@ -88,7 +88,7 @@ class Trainer:
         
         pbar = tqdm(train_loader, desc=f'Epoch {epoch} [Train]')
         for i, (inputs, targets) in enumerate(pbar):
-            if i > 11: break
+            #if i > 11: break
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             
             # Forward pass
@@ -172,7 +172,7 @@ class Trainer:
         with torch.no_grad():
             pbar = tqdm(val_loader, desc=f'Epoch {epoch} [Val]')
             for i, (inputs, targets) in enumerate(pbar):
-                if i > 5: break
+                #if i > 5: break
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
                 
                 # Forward pass

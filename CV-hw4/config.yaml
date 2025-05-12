@@ -1,6 +1,6 @@
 device: "cuda"
 model:
-  type: "unet" # unet or deeplabv3
+  type: "deeplabv3plus" # unet or deeplabv3
   n_classes: 19
   backbone: "resnet"
 data:

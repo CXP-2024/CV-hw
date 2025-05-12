@@ -13,6 +13,7 @@ from datetime import datetime
 from datasets import CityscapesDataModule, num_classes
 from models.unet import UNet
 from models.deeplabv3 import DeepLabV3
+from models.deeplabv3plus import DeepLabV3Plus
 from utils.simple_experiment import SimpleExperiment
 
 def set_seed(seed):
@@ -80,6 +81,8 @@ def main(args):
         model_class = UNet
     elif args.model.lower() == 'deeplabv3':
         model_class = DeepLabV3
+    elif args.model.lower() == 'deeplabv3plus':
+        model_class = DeepLabV3Plus
     else:
         raise ValueError(f"Unsupported model: {args.model}")
     
@@ -111,7 +114,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train semantic segmentation models using original train/val split")
     
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
-    parser.add_argument('--model', type=str, default='unet', choices=['unet', 'deeplabv3'], help='Model to train')
+    parser.add_argument('--model', type=str, default='unet', choices=['unet', 'deeplabv3', 'deeplabv3plus'], help='Model to train')
     parser.add_argument('--device', type=str, default='auto', help='Device to use (e.g., cuda, cpu)')
     parser.add_argument('--num_workers', type=int, default=1, help='Number of data loading workers')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
