@@ -294,6 +294,9 @@ class CityscapesDataModule:
                 if self.augment:
                     # Synchronized transformations for image and target
                     img, target = self._apply_sync_transforms(img, target)
+                    # Add logging to indicate augmentation is working
+                    if random.random() > 0.99:  # Only log 1% of the time to avoid excessive output
+                        print("数据增强已应用: 图像大小 =", img.size)
                     
                 # Apply other transforms
                 img = self.train_transform(img)
@@ -327,18 +330,53 @@ class CityscapesDataModule:
     
     def _apply_sync_transforms(self, img, target):
         """Apply synchronized transformations to both image and target."""
-        # Random horizontal flipping
+        # Random horizontal flipping (50% probability)
         if random.random() > 0.5:
             img = TF.hflip(img)
             target = TF.hflip(target)
         
-        # Random cropping
-        # i, j, h, w = transforms.RandomCrop.get_params(img, output_size=self.image_size)
-        # img = TF.crop(img, i, j, h, w)
-        # target = TF.crop(target, i, j, h, w)
+        # Random rotation (small angles, -10 to 10 degrees, 30% probability)
+        if random.random() > 0.7:
+            angle = random.uniform(-10, 10)
+            img = TF.rotate(img, angle, interpolation=Image.BILINEAR, fill=0)
+            target = TF.rotate(target, angle, interpolation=Image.NEAREST, fill=255)
         
-        # You can add more synchronized transforms here
+        # Random scaling (0.8 to 1.2, 50% probability)
+        if random.random() > 0.5:
+            scale_factor = random.uniform(0.8, 1.2)
+            new_height = int(img.height * scale_factor)
+            new_width = int(img.width * scale_factor)
+            img = TF.resize(img, (new_height, new_width), interpolation=Image.BILINEAR)
+            target = TF.resize(target, (new_height, new_width), interpolation=Image.NEAREST)
+            
+        # Random cropping (40% probability, only if image is larger than target size)
+        if random.random() > 0.6 and img.width > self.image_size[1] and img.height > self.image_size[0]:
+            i, j, h, w = transforms.RandomCrop.get_params(img, output_size=self.image_size)
+            img = TF.crop(img, i, j, h, w)
+            target = TF.crop(target, i, j, h, w)
+        else:
+            # Ensure image is the right size
+            img = TF.resize(img, self.image_size, interpolation=Image.BILINEAR)
+            target = TF.resize(target, self.image_size, interpolation=Image.NEAREST)
         
+        # Color jittering (brightness, contrast, saturation) - only applied to image, not target
+        if random.random() > 0.5:
+            brightness_factor = random.uniform(0.8, 1.2)
+            contrast_factor = random.uniform(0.8, 1.2)
+            saturation_factor = random.uniform(0.8, 1.2)
+            
+            img = TF.adjust_brightness(img, brightness_factor)
+            img = TF.adjust_contrast(img, contrast_factor)
+            img = TF.adjust_saturation(img, saturation_factor)
+        
+        # Random Gaussian blur (15% probability, only applied to image)
+        if random.random() > 0.85:
+            img_tensor = TF.to_tensor(img).unsqueeze(0)
+            kernel_size = random.choice([3, 5])
+            sigma = random.uniform(0.1, 2.0)
+            img_tensor = transforms.GaussianBlur(kernel_size, sigma=sigma)(img_tensor)
+            img = TF.to_pil_image(img_tensor.squeeze(0))
+            
         return img, target
 
     def get_train_dataloader(self):
