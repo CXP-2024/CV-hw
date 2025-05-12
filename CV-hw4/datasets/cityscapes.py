@@ -262,6 +262,26 @@ class CityscapesDataModule:
         
         return train_loader, val_loader
     
+    def get_cross_validation_folds(self):
+        """
+        Get cross-validation folds.
+        
+        Returns:
+            List of dictionaries containing train and val data loaders for each fold.
+        """
+        cv_folds = []
+        
+        for fold_idx in range(self.k_folds):
+            train_loader, val_loader = self.setup_fold(fold_idx)
+            fold_data = {
+                'train_loader': train_loader,
+                'val_loader': val_loader,
+                'fold_idx': fold_idx
+            }
+            cv_folds.append(fold_data)
+        
+        return cv_folds
+    
     def _collate_with_transform(self, batch, is_train=True):
         """Custom collate function that applies transforms."""
         images = []
@@ -280,11 +300,13 @@ class CityscapesDataModule:
             else:
                 img = self.val_transform(img)
                 
-            # Always apply target transform
-            target = self.target_transform(target)
+            # Apply resizing first while still in PIL format
+            target = target.resize(self.image_size, Image.NEAREST)
             
-            # Convert target to tensor with mapped IDs
+            # Convert to numpy and apply mapping
             target_np = np.array(target, dtype=np.int64)
+            
+            # Map the IDs to train IDs
             for k, v in id_to_trainid.items():
                 target_np[target_np == k] = v
             
