@@ -204,11 +204,14 @@ class SimpleExperiment:
             start_epoch=start_epoch,
             early_stopping_patience=early_stopping_patience
         )
-        
-        # Save training history
+          # Save training history
         history = {
             'train_loss': train_metrics['loss'],
-            'val_loss': val_metrics['loss']
+            'val_loss': val_metrics['loss'],
+            'train_miou': train_metrics['miou'],
+            'val_miou': val_metrics['miou'],
+            'train_weighted_miou': train_metrics['weighted_miou'],
+            'val_weighted_miou': val_metrics['weighted_miou']
         }
         
         history_df = pd.DataFrame(history)
@@ -253,6 +256,14 @@ class SimpleExperiment:
             save_path=os.path.join(self.figures_dir, 'confusion_matrix.png')
         )
         
+        # 添加IoU指标可视化
+        from utils.visualization import visualize_iou_metrics
+        visualize_iou_metrics(
+            iou_per_class=val_results['iou_per_class'],
+            class_names=[f'Class {i}' for i in range(num_classes)],
+            save_path=os.path.join(self.figures_dir, 'iou_per_class.png')
+        )
+        
         # Save results
         results = {
             'train_metrics': train_metrics,
@@ -289,9 +300,9 @@ class SimpleExperiment:
     
     def plot_training_history(self, history):
         """Plot training history."""
+        # Plot loss
         plt.figure(figsize=(10, 6))
         
-        # Plot loss only
         plt.plot(history['train_loss'], label='Train')
         plt.plot(history['val_loss'], label='Validation')
         plt.xlabel('Epoch')
@@ -302,4 +313,35 @@ class SimpleExperiment:
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.figures_dir, 'training_history.png'))
+        plt.close()
+        
+        # 如果存在IoU指标，则绘制IoU图表
+        if 'train_miou' in history and 'val_miou' in history:
+            self.plot_iou_history(history)
+    
+    def plot_iou_history(self, history):
+        """Plot IoU metrics history."""
+        plt.figure(figsize=(12, 10))
+        
+        # 创建2x1的子图布局
+        plt.subplot(2, 1, 1)
+        plt.plot(history['train_miou'], label='Train mIoU')
+        plt.plot(history['val_miou'], label='Validation mIoU')
+        plt.xlabel('Epoch')
+        plt.ylabel('Mean IoU')
+        plt.title('Training and Validation Mean IoU')
+        plt.legend()
+        plt.grid(True)
+        
+        plt.subplot(2, 1, 2)
+        plt.plot(history['train_weighted_miou'], label='Train Weighted mIoU')
+        plt.plot(history['val_weighted_miou'], label='Validation Weighted mIoU')
+        plt.xlabel('Epoch')
+        plt.ylabel('Weighted Mean IoU')
+        plt.title('Training and Validation Weighted Mean IoU')
+        plt.legend()
+        plt.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.figures_dir, 'iou_history.png'))
         plt.close()

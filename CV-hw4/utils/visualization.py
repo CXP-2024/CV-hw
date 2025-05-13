@@ -388,3 +388,37 @@ def decode_segmap(segmap, class_colors=None):
     
     rgb = np.stack([r, g, b], axis=2)
     return rgb
+
+def visualize_iou_metrics(iou_per_class, class_names, save_path):
+    """
+    Visualize IoU metrics for each class.
+    
+    Args:
+        iou_per_class: List or array of IoU values for each class
+        class_names: List of class names
+        save_path: Path to save the visualization
+    """
+    plt.figure(figsize=(12, 8))
+    bars = plt.bar(range(len(iou_per_class)), iou_per_class, color='skyblue', edgecolor='navy')
+    
+    # Add IoU values on top of bars
+    for i, bar in enumerate(bars):
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                f'{iou_per_class[i]:.2f}', ha='center', fontsize=9)
+    
+    plt.xlabel('Class')
+    plt.ylabel('IoU Score')
+    plt.title('IoU Scores for Each Class')
+    plt.xticks(range(len(class_names)), class_names, rotation=90)
+    plt.ylim(0, 1.0)
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # Add average line
+    mean_iou = np.mean(iou_per_class)
+    plt.axhline(y=mean_iou, color='r', linestyle='-', label=f'Mean IoU: {mean_iou:.3f}')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
