@@ -371,11 +371,104 @@ class CrossValidationExperiment:
                 best_model_path = os.path.join(fold_models_dir, 'best_model.pth')
                 best_model_copy_path = os.path.join(self.models_dir, 'best_overall_model.pth')
                 torch.save(torch.load(best_model_path), best_model_copy_path)
+                
+            # 保存每一折的最佳模型权重 - 用于后续可能的模型融合
+            best_fold_model_path = os.path.join(fold_models_dir, 'best_model.pth')
+            best_fold_model_state = torch.load(best_fold_model_path)
+            all_fold_models_dir = os.path.join(self.models_dir, 'all_folds')
+            os.makedirs(all_fold_models_dir, exist_ok=True)
+            torch.save(best_fold_model_state, os.path.join(all_fold_models_dir, f'fold_{fold}_best_model.pth'))
         
         # Calculate aggregate statistics
         mious = [fold_res['val_results']['miou'] for fold_res in cv_results['fold_results']]
         cv_results['mean_miou'] = np.mean(mious)
         cv_results['std_miou'] = np.std(mious)
+        
+				###########################################################################################################
+        # 实现多种"最佳"模型保存模式
+        # 1. 平均权重模型 - 将所有折最佳模型的权重平均
+        self.logger.info("创建平均权重模型...")
+        avg_model = self.model_class(num_classes=num_classes).to(self.device)
+        avg_state_dict = {}
+        
+        # 首先加载第一个模型的权重作为基准
+        first_fold_model_path = os.path.join(all_fold_models_dir, 'fold_0_best_model.pth')
+        first_fold_state_dict = torch.load(first_fold_model_path)
+        
+        # 初始化平均权重字典
+        for key in first_fold_state_dict.keys():
+            avg_state_dict[key] = torch.zeros_like(first_fold_state_dict[key])
+          # 累加所有模型权重
+        for fold in range(k_folds):
+            fold_model_path = os.path.join(all_fold_models_dir, f'fold_{fold}_best_model.pth')
+            fold_state_dict = torch.load(fold_model_path)
+            for key in avg_state_dict.keys():
+                avg_state_dict[key] += fold_state_dict[key]
+        
+        # 计算平均值
+        for key in avg_state_dict.keys():
+            # 检查是否是整型张量，如果是则需要特殊处理
+            if avg_state_dict[key].dtype == torch.long or avg_state_dict[key].dtype == torch.int:
+                # 对于整型张量，先转换为浮点型，再计算，然后转回整型
+                avg_state_dict[key] = (avg_state_dict[key].float() / k_folds).long()
+            else:
+                # 浮点型张量可以直接除
+                avg_state_dict[key] /= k_folds
+        
+        # 保存平均权重模型
+        avg_model.load_state_dict(avg_state_dict)
+        avg_model_path = os.path.join(self.models_dir, 'avg_weights_model.pth')
+        torch.save(avg_state_dict, avg_model_path)
+        self.logger.info(f"平均权重模型已保存到: {avg_model_path}")
+        
+        # 2. 最高性能模型 - 已在每个fold循环中实现
+        self.logger.info(f"最高性能单折模型已保存 (Fold {cv_results['best_fold']+1})")
+        
+        # 3. 最近K折平均模型 (取最近的前K个性能最好的折)
+        k_best = min(3, k_folds)  # 取前3个最好的折，或者全部折如果小于3
+        self.logger.info(f"创建Top-{k_best}折平均模型...")
+        
+        # 找到性能最好的k_best个折
+        fold_performances = [(fold, fold_res['val_results']['miou']) 
+                             for fold, fold_res in enumerate(cv_results['fold_results'])]
+        top_k_folds = sorted(fold_performances, key=lambda x: x[1], reverse=True)[:k_best]
+        
+        # 创建并初始化top-k平均模型
+        top_k_avg_model = self.model_class(num_classes=num_classes).to(self.device)
+        top_k_avg_state_dict = {}
+        
+        # 初始化平均权重字典
+        for key in first_fold_state_dict.keys():
+            top_k_avg_state_dict[key] = torch.zeros_like(first_fold_state_dict[key])
+          # 累加前k个最佳模型的权重
+        for fold_idx, _ in top_k_folds:
+            fold_model_path = os.path.join(all_fold_models_dir, f'fold_{fold_idx}_best_model.pth')
+            fold_state_dict = torch.load(fold_model_path)
+            for key in top_k_avg_state_dict.keys():
+                top_k_avg_state_dict[key] += fold_state_dict[key]
+        
+        # 计算平均值
+        for key in top_k_avg_state_dict.keys():
+            # 检查是否是整型张量，如果是则需要特殊处理
+            if top_k_avg_state_dict[key].dtype == torch.long or top_k_avg_state_dict[key].dtype == torch.int:
+                # 对于整型张量，先转换为浮点型，再计算，然后转回整型
+                top_k_avg_state_dict[key] = (top_k_avg_state_dict[key].float() / k_best).long()
+            else:
+                # 浮点型张量可以直接除
+                top_k_avg_state_dict[key] /= k_best
+        
+        # 保存top-k平均权重模型
+        top_k_avg_model.load_state_dict(top_k_avg_state_dict)
+        top_k_avg_model_path = os.path.join(self.models_dir, f'top_{k_best}_avg_model.pth')
+        torch.save(top_k_avg_state_dict, top_k_avg_model_path)
+        self.logger.info(f"Top-{k_best}折平均模型已保存到: {top_k_avg_model_path}")
+        
+        # 记录不同模型的保存路径
+        cv_results['model_paths'] = {
+            'best_single_fold': os.path.join(self.models_dir, 'best_overall_model.pth'),
+            'avg_weights': avg_model_path,
+            f'top_{k_best}_avg': top_k_avg_model_path
+        }
         
         # Generate aggregated validation metrics across folds
         self.logger.info(f"交叉验证完成！平均 mIoU: {cv_results['mean_miou']:.4f} ± {cv_results['std_miou']:.4f}")
@@ -443,6 +536,17 @@ class CrossValidationExperiment:
         results_path = os.path.join(self.logs_dir, 'cv_results.json')
         with open(results_path, 'w') as f:
             json.dump(cv_results, f, indent=4)
+        
+        # 评估所有保存的模型
+        self.logger.info("评估所有保存的模型变体...")
+        model_evaluation = self.evaluate_saved_models(num_classes=num_classes)
+        cv_results['model_evaluation'] = self.convert_numpy_to_python(model_evaluation)
+        
+        # 更新结果文件，包含模型评估信息
+        with open(results_path, 'w') as f:
+            json.dump(cv_results, f, indent=4)
+            
+        self.logger.info("交叉验证实验完成!")
         
         return cv_results
     def plot_training_history(self, history, save_path=None):
@@ -547,3 +651,154 @@ class CrossValidationExperiment:
             return float(obj)
         else:
             return obj
+            
+    def evaluate_saved_models(self, num_classes=19):
+        """评估所有保存的模型并比较它们的性能。
+        
+        此方法会加载在交叉验证过程中保存的不同类型的模型，
+        在验证集上评估它们的性能，并生成比较报告。
+        
+        Args:
+            num_classes: 类别数量
+            
+        Returns:
+            评估结果的字典
+        """
+        self.logger.info("开始评估所有保存的模型...")
+        
+        # 创建验证数据加载器
+        val_loader = DataLoader(
+            self.dataset_module.val_dataset,
+            batch_size=self.dataset_module.batch_size,
+            shuffle=False,
+            num_workers=self.dataset_module.num_workers,
+            pin_memory=True
+        )
+        
+        # 获取需要评估的模型路径
+        model_paths = {}
+        
+        # 1. 最佳单折模型
+        best_model_path = os.path.join(self.models_dir, 'best_overall_model.pth')
+        if os.path.exists(best_model_path):
+            model_paths['best_single_fold'] = best_model_path
+        
+        # 2. 平均权重模型
+        avg_model_path = os.path.join(self.models_dir, 'avg_weights_model.pth')
+        if os.path.exists(avg_model_path):
+            model_paths['avg_weights'] = avg_model_path
+        
+        # 3. Top-K平均模型
+        # 检查可能的top-k模型
+        for k in [2, 3, 5]:
+            top_k_path = os.path.join(self.models_dir, f'top_{k}_avg_model.pth')
+            if os.path.exists(top_k_path):
+                model_paths[f'top_{k}_avg'] = top_k_path
+        
+        # 初始化结果字典
+        results = {}
+        
+        # 评估每个模型
+        for model_name, model_path in model_paths.items():
+            self.logger.info(f"评估模型: {model_name}")
+            
+            # 加载模型
+            model = self.model_class(num_classes=num_classes).to(self.device)
+            model.load_state_dict(torch.load(model_path))
+            model.eval()
+            
+            # 在验证集上评估
+            val_results = evaluate_model(
+                model=model,
+                dataloader=val_loader,
+                device=self.device,
+                num_classes=num_classes,
+                ignore_index=self.config.get('data', {}).get('ignore_index', 255)
+            )
+            
+            self.logger.info(f"{model_name} - mIoU: {val_results['miou']:.4f}, 加权mIoU: {val_results['weighted_miou']:.4f}")
+            
+            # 保存结果
+            results[model_name] = {
+                'miou': val_results['miou'],
+                'weighted_miou': val_results['weighted_miou'],
+                'iou_per_class': val_results['iou_per_class'],
+                'pixel_accuracy': val_results.get('pixel_accuracy', None)
+            }
+        
+        # 保存评估结果
+        model_eval_dir = os.path.join(self.figures_dir, 'model_evaluation')
+        os.makedirs(model_eval_dir, exist_ok=True)
+        
+        # 保存结果为JSON
+        eval_results_path = os.path.join(model_eval_dir, 'model_comparison.json')
+        with open(eval_results_path, 'w') as f:
+            json.dump(self.convert_numpy_to_python(results), f, indent=4)
+            
+        # 绘制比较图
+        self._plot_model_comparison(results, save_dir=model_eval_dir)
+        
+        self.logger.info(f"模型评估完成，结果保存在: {eval_results_path}")
+        return results
+    
+    def _plot_model_comparison(self, results, save_dir):
+        """绘制不同模型之间的性能比较图。"""
+        model_names = list(results.keys())
+        mious = [results[name]['miou'] for name in model_names]
+        weighted_mious = [results[name]['weighted_miou'] for name in model_names]
+        
+        # 设置图形大小和风格
+        plt.figure(figsize=(14, 8))
+        plt.style.use('ggplot')
+        
+        # 柱状图宽度
+        width = 0.35
+        x = np.arange(len(model_names))
+        
+        # 创建柱状图
+        bar1 = plt.bar(x - width/2, mious, width, label='mIoU', color='skyblue')
+        bar2 = plt.bar(x + width/2, weighted_mious, width, label='Weighted mIoU', color='lightcoral')
+          # 添加标题和标签 (使用英文替代中文)
+        plt.title('Performance Comparison of Different Model Saving Strategies', fontsize=16)
+        plt.xlabel('Model Type', fontsize=14)
+        plt.ylabel('IoU Score', fontsize=14)
+        plt.xticks(x, model_names, rotation=45, ha='right')
+        plt.ylim(min(min(mious), min(weighted_mious)) * 0.9, max(max(mious), max(weighted_mious)) * 1.05)
+        
+        # 在柱状图顶部添加数值
+        for bar in [bar1, bar2]:
+            for rect in bar:
+                height = rect.get_height()
+                plt.text(rect.get_x() + rect.get_width()/2., height + 0.005,
+                        f'{height:.4f}',
+                        ha='center', va='bottom', fontsize=10)
+        
+        plt.legend()
+        plt.tight_layout()
+        
+        # 保存图形
+        plt.savefig(os.path.join(save_dir, 'model_comparison.png'), dpi=300)
+        plt.close()
+        
+        # 绘制每个模型的类别IoU比较
+        if all('iou_per_class' in results[name] for name in model_names):
+            plt.figure(figsize=(15, 10))
+            
+            # 获取类别数量
+            num_classes = len(results[list(results.keys())[0]]['iou_per_class'])
+            class_indices = list(range(num_classes))
+            
+            # 为每个模型绘制线图
+            for model_name in model_names:
+                plt.plot(class_indices, results[model_name]['iou_per_class'], 
+                        marker='o', linestyle='-', label=model_name)
+            plt.title('Per-class IoU Comparison Across Different Models', fontsize=16)
+            plt.xlabel('Class Index', fontsize=14)
+            plt.ylabel('IoU Score', fontsize=14)
+            plt.xticks(class_indices)
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.legend()
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, 'per_class_iou_comparison.png'), dpi=300)
+            plt.close()

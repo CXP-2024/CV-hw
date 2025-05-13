@@ -15,6 +15,7 @@ from torchvision import transforms
 import glob
 from pathlib import Path
 import seaborn as sns
+from typing import List, Tuple, Dict, Union
 
 
 # Import custom modules
@@ -74,6 +75,38 @@ def predict_image(model, image_path, transform, device):
     return resized_image, pred
 
 
+def predict_batch(model, image_paths, transform, device):
+    """Make predictions for a batch of images"""
+    batch_images = []
+    resized_images = []
+    
+    # Process each image in the batch
+    for image_path in image_paths:
+        # Load image
+        image = Image.open(image_path).convert('RGB')
+        
+        # Resize image to the same size used in transform (important for visualization)
+        resized_image = image.resize((1024, 512), Image.BILINEAR)
+        resized_images.append(resized_image)
+        
+        # Apply transform for model input
+        input_tensor = transform(image).unsqueeze(0)
+        batch_images.append(input_tensor)
+    
+    # Stack tensors to create a batch
+    if batch_images:
+        batch_tensor = torch.cat(batch_images, dim=0).to(device)
+        
+        # Make prediction for the batch
+        with torch.no_grad():
+            outputs = model(batch_tensor)
+            preds = torch.argmax(outputs, dim=1).cpu().numpy()
+        
+        return resized_images, preds
+    
+    return [], []
+
+
 def get_ground_truth(image_path, city_dir):
     """Get ground truth for an image"""
     # Extract city and file name
@@ -105,6 +138,21 @@ def get_ground_truth(image_path, city_dir):
     return label_np
 
 
+def get_ground_truths(image_paths, city_dir):
+    """Get ground truths for a batch of images"""
+    ground_truths = []
+    
+    for image_path in image_paths:
+        ground_truth = get_ground_truth(image_path, city_dir)
+        ground_truths.append(ground_truth)
+        
+    # Convert to numpy array for batch processing
+    if ground_truths:
+        return np.array(ground_truths)
+    
+    return np.array([])
+
+
 def create_color_overlay(image, segmentation, class_colors):
     """Create a color overlay of segmentation on top of image"""
     # Create RGB image from segmentation
@@ -126,23 +174,61 @@ def create_color_overlay(image, segmentation, class_colors):
 
 
 def calculate_confusion_matrix(pred, gt, num_classes, ignore_index=255):
-    """Calculate confusion matrix between prediction and ground truth"""
-    # 创建有效数据的掩码
-    mask = (gt != ignore_index)
+    """Calculate confusion matrix between prediction and ground truth
     
-    # 提取有效的目标和预测值
-    valid_targets = gt[mask].flatten()
-    valid_preds = pred[mask].flatten()
+    支持单个样本或批量样本(batch)的计算
     
-    # 确保索引在有效范围内
-    valid_indices = (valid_targets < num_classes) & (valid_preds < num_classes)
-    valid_targets = valid_targets[valid_indices]
-    valid_preds = valid_preds[valid_indices]
+    Args:
+        pred: 预测结果，形状可以是 (H, W) 或者 (B, H, W)
+        gt: 真实标签，形状可以是 (H, W) 或者 (B, H, W)
+        num_classes: 类别数
+        ignore_index: 忽略的类别索引，默认为255
     
-    # 创建混淆矩阵并一次性填充
+    Returns:
+        confusion_matrix: 混淆矩阵，形状为 (num_classes, num_classes)
+    """
+    # 初始化混淆矩阵
     confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
-    if len(valid_targets) > 0:
-        np.add.at(confusion_matrix, (valid_targets, valid_preds), 1)
+    
+    # 检查是否是批量数据
+    if len(pred.shape) == 3 and len(gt.shape) == 3:  # 批量数据 (B, H, W)
+        batch_size = pred.shape[0]
+        for b in range(batch_size):
+            # 处理每个样本
+            pred_sample = pred[b]
+            gt_sample = gt[b]
+            
+            # 创建有效数据的掩码
+            mask = (gt_sample != ignore_index)
+            
+            # 提取有效的目标和预测值
+            valid_targets = gt_sample[mask].flatten()
+            valid_preds = pred_sample[mask].flatten()
+            
+            # 确保索引在有效范围内
+            valid_indices = (valid_targets < num_classes) & (valid_preds < num_classes)
+            valid_targets = valid_targets[valid_indices]
+            valid_preds = valid_preds[valid_indices]
+            
+            # 更新混淆矩阵
+            if len(valid_targets) > 0:
+                np.add.at(confusion_matrix, (valid_targets, valid_preds), 1)
+    else:  # 单个样本 (H, W)
+        # 创建有效数据的掩码
+        mask = (gt != ignore_index)
+        
+        # 提取有效的目标和预测值
+        valid_targets = gt[mask].flatten()
+        valid_preds = pred[mask].flatten()
+        
+        # 确保索引在有效范围内
+        valid_indices = (valid_targets < num_classes) & (valid_preds < num_classes)
+        valid_targets = valid_targets[valid_indices]
+        valid_preds = valid_preds[valid_indices]
+        
+        # 创建混淆矩阵并一次性填充
+        if len(valid_targets) > 0:
+            np.add.at(confusion_matrix, (valid_targets, valid_preds), 1)
     
     return confusion_matrix
 
@@ -196,6 +282,7 @@ def main(args):
     
     print(f"Using all {len(test_images)} validation images for testing")
     print(f"Will visualize the first {len(visualization_images)} images")
+    print(f"Using batch size: {args.batch_size}")
     
     # Create confusion matrix for mIoU calculation
     num_classes = config['model']['n_classes']
@@ -204,19 +291,21 @@ def main(args):
     # First process all images to calculate mIoU
     print("Processing all images for mIoU calculation...")
     import tqdm
-    #i = 0
-    for image_path in tqdm.tqdm(test_images, desc='Processing images'):
-        #i += 1
-        #if i > 5: break	# For testing, limit to first 5 images
+      # Process images in batches
+    num_images = len(test_images)
+    for batch_start in tqdm.tqdm(range(0, num_images, args.batch_size), desc='Processing batches'):
+        # Get the current batch of images
+        batch_end = min(batch_start + args.batch_size, num_images)
+        batch_image_paths = test_images[batch_start:batch_end]
         
-        # Get ground truth
-        ground_truth = get_ground_truth(image_path, val_gt_dir)
+        # Get ground truths for the batch
+        batch_ground_truths = get_ground_truths(batch_image_paths, val_gt_dir)
         
-        # Predict with DeepLabV3Plus
-        _, prediction = predict_image(deeplabv3plus_model, image_path, transform, device)
+        # Predict with DeepLabV3Plus (batch processing)
+        _, batch_predictions = predict_batch(deeplabv3plus_model, batch_image_paths, transform, device)
         
-        # Update confusion matrix
-        confusion_matrix += calculate_confusion_matrix(prediction, ground_truth, num_classes)
+        # 直接用批量数据计算混淆矩阵，提高计算效率
+        confusion_matrix += calculate_confusion_matrix(batch_predictions, batch_ground_truths, num_classes)
 
     # Then create visualizations for the first 30 images
     print("\nCreating visualizations for the first images...")
@@ -226,7 +315,7 @@ def main(args):
         # Get ground truth
         ground_truth = get_ground_truth(image_path, val_gt_dir)
         
-        # Predict with DeepLabV3Plus
+        # Predict with DeepLabV3Plus (single image for visualization)
         image, prediction = predict_image(deeplabv3plus_model, image_path, transform, device)
         
         # Create overlay
@@ -523,6 +612,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default='outputs/deeplabv3plus_test_results', help='Output directory for results')
     parser.add_argument('--device', type=str, default='auto', help='Device to use (e.g., cuda, cpu)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
+    parser.add_argument('--batch_size', type=int, default=4, help='Batch size for evaluation')
     
     args = parser.parse_args()
     main(args)

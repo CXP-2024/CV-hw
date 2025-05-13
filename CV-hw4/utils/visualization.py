@@ -155,12 +155,25 @@ def visualize_predictions(model, dataloader, device, num_samples=5, save_dir='ou
         save_dir: Directory to save visualizations
         class_colors: List of RGB colors for each class
     """
-    os.makedirs(save_dir, exist_ok=True)
-    
-    # If class colors not provided, use a colormap
+    os.makedirs(save_dir, exist_ok=True)    # If class colors not provided, use a colormap
     if class_colors is None:
-        colormap = cm.get_cmap('tab20', 20)
-        class_colors = [tuple(int(255 * c) for c in colormap(i)[:3]) for i in range(20)]
+        # 兼容不同版本的matplotlib
+        try:
+            # 最新版本的matplotlib (>=3.9)
+            from matplotlib import colormaps
+            colormap = colormaps['tab20']
+            # 限制colors到20个
+            class_colors = [tuple(int(255 * c) for c in colormap(i)[:3]) for i in range(20)]
+        except (ImportError, AttributeError, TypeError):
+            try:
+                # 较旧版本的matplotlib (3.7-3.8)
+                from matplotlib import colormaps
+                colormap = colormaps.get_cmap('tab20')
+                class_colors = [tuple(int(255 * c) for c in colormap(i)[:3]) for i in range(20)]
+            except (ImportError, AttributeError, TypeError):
+                # 更旧版本的matplotlib
+                colormap = cm.get_cmap('tab20', 20)
+                class_colors = [tuple(int(255 * c) for c in colormap(i)[:3]) for i in range(20)]
     
     model.eval()
     all_samples = []
@@ -372,9 +385,23 @@ def decode_segmap(segmap, class_colors=None):
         RGB image
     """
     if class_colors is None:
-        # Default color map
-        colormap = cm.get_cmap('tab20', 20)
-        class_colors = [tuple(int(255 * c) for c in colormap(i)[:3]) for i in range(20)]
+        # Default color map - 兼容不同版本的matplotlib
+        try:
+            # 最新版本的matplotlib (>=3.9)
+            from matplotlib import colormaps
+            colormap = colormaps['tab20']
+            # 限制colors到20个
+            class_colors = [tuple(int(255 * c) for c in colormap(i)[:3]) for i in range(20)]
+        except (ImportError, AttributeError, TypeError):
+            try:
+                # 较旧版本的matplotlib (3.7-3.8)
+                from matplotlib import colormaps
+                colormap = colormaps.get_cmap('tab20')
+                class_colors = [tuple(int(255 * c) for c in colormap(i)[:3]) for i in range(20)]
+            except (ImportError, AttributeError, TypeError):
+                # 更旧版本的matplotlib
+                colormap = cm.get_cmap('tab20', 20)
+                class_colors = [tuple(int(255 * c) for c in colormap(i)[:3]) for i in range(20)]
     
     r = np.zeros_like(segmap).astype(np.uint8)
     g = np.zeros_like(segmap).astype(np.uint8)

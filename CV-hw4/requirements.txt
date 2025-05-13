@@ -8,3 +8,4 @@ cityscapesscripts
 tqdm
 scikit-learn
 pandas
+seaborn

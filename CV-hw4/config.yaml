@@ -10,11 +10,11 @@ data:
   ignore_index: 255
 training:
   epochs: 20
-  lr: 2e-4  # 降低学习率
+  lr: 1e-4  # 降低学习率
   weight_decay: 5e-4  # 增加权重衰减
   batch_size: 8
-  k_folds: 3
-  early_stopping_patience: 8  # 增加早停耐心值
+  k_folds: 5
+  early_stopping_patience: 6  # 增加早停耐心值
   lr_schedule: "warmrestart"  # 使用带热重启的余弦退火学习率调度
   lr_warmrestart_T0: 5  # 第一次重启的周期
   lr_warmrestart_T_mult: 2  # 每次重启后周期乘数
