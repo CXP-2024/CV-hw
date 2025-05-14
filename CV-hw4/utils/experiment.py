@@ -79,40 +79,10 @@ class CrossValidationExperiment:
         """Setup train and validation dataloaders for a specific fold."""
         self.dataset_module.setup()
         
-        # For cross-validation, we'll use the train_dataset and split it
-        dataset = self.dataset_module.train_dataset
-        dataset_size = len(dataset)
-        indices = list(range(dataset_size))
+        # Use the new method in CityscapesDataModule that handles cross-validation properly
+        train_loader, val_loader, train_size, val_size = self.dataset_module.get_cross_val_dataloaders(fold_idx)
         
-        # Use KFold from sklearn to split indices
-        kfold = KFold(n_splits=k_folds, shuffle=True, random_state=42)
-        folds = list(kfold.split(indices))
-        
-        # Get train and validation indices for current fold
-        train_indices, val_indices = folds[fold_idx]
-        
-        # Create samplers for train and validation sets
-        train_sampler = SubsetRandomSampler(train_indices)
-        val_sampler = SubsetRandomSampler(val_indices)
-        
-        # Create DataLoaders with samplers
-        train_loader = DataLoader(
-            dataset,
-            batch_size=self.dataset_module.batch_size,
-            sampler=train_sampler,
-            num_workers=self.dataset_module.num_workers,
-            pin_memory=True
-        )
-        
-        val_loader = DataLoader(
-            dataset,
-            batch_size=self.dataset_module.batch_size,
-            sampler=val_sampler,
-            num_workers=self.dataset_module.num_workers,
-            pin_memory=True
-        )
-        
-        return train_loader, val_loader, len(train_indices), len(val_indices)
+        return train_loader, val_loader, train_size, val_size
     
     def run_cross_validation(self, num_classes=19, num_epochs=50, k_folds=5, criterion=None, 
                              optimizer_params=None, early_stopping_patience=10, 
@@ -185,19 +155,19 @@ class CrossValidationExperiment:
                 # Handle ignore_index if specified in config
                 ignore_index = self.config.get('data', {}).get('ignore_index', 255)
                 
-                # 获取损失函数类型
+                # Get loss function type
                 loss_type = self.config.get('training', {}).get('loss', 'cross_entropy')
-                self.logger.info(f"使用损失函数: {loss_type}")
+                self.logger.info(f"Using loss function: {loss_type}")
                 
                 if loss_type == 'label_smoothing':
                     criterion = LabelSmoothCrossEntropyLoss(
                         smoothing=0.1, 
                         ignore_index=ignore_index
                     )
-                    self.logger.info("使用标签平滑交叉熵损失函数，平滑因子=0.1")
+                    self.logger.info("Using Label Smoothing Cross Entropy Loss, smoothing factor=0.1")
                 elif loss_type == 'dice':
                     criterion = DiceLoss(ignore_index=ignore_index)
-                    self.logger.info("使用Dice损失函数")
+                    self.logger.info("Using Dice Loss")
                 elif loss_type == 'combined':
                     criterion = CombinedLoss(
                         ce_weight=0.6, 
@@ -205,11 +175,11 @@ class CrossValidationExperiment:
                         smoothing=0.1, 
                         ignore_index=ignore_index
                     )
-                    self.logger.info("使用组合损失函数: 0.6 * CE + 0.4 * Dice")
+                    self.logger.info("Using Combined Loss: 0.6 * CE + 0.4 * Dice")
                 else:
-                    # 默认使用交叉熵损失
+                    # Default: use cross entropy loss
                     criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
-                    self.logger.info("使用标准交叉熵损失函数")
+                    self.logger.info("Using standard Cross Entropy Loss")
             
             # Initialize optimizer with explicit type conversion
             lr = float(optimizer_params.get('lr', 0.001))
@@ -226,15 +196,15 @@ class CrossValidationExperiment:
                 scheduler = optim.lr_scheduler.CosineAnnealingLR(
                     optimizer, T_max=num_epochs, eta_min=lr * 0.01
                 )
-                self.logger.info(f"使用余弦退火学习率调度，初始学习率: {lr}, 最小学习率: {lr * 0.01}")
+                self.logger.info(f"Using Cosine Annealing LR scheduler, initial LR: {lr}, min LR: {lr * 0.01}")
             elif lr_schedule == 'warmrestart':
-                # 使用带热重启的余弦退火
-                T_0 = self.config.get('training', {}).get('lr_warmrestart_T0', 10)  # 第一次重启的周期
-                T_mult = self.config.get('training', {}).get('lr_warmrestart_T_mult', 2)  # 每次重启后周期乘数
+                # Using cosine annealing with warm restarts
+                T_0 = self.config.get('training', {}).get('lr_warmrestart_T0', 10)  # First restart cycle
+                T_mult = self.config.get('training', {}).get('lr_warmrestart_T_mult', 2)  # Cycle multiplier after each restart
                 scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
                     optimizer, T_0=T_0, T_mult=T_mult, eta_min=1e-6
                 )
-                self.logger.info(f"使用带热重启的余弦退火学习率调度器，T_0={T_0}, T_mult={T_mult}, 初始学习率: {lr}")
+                self.logger.info(f"Using Cosine Annealing Warm Restart scheduler, T_0={T_0}, T_mult={T_mult}, initial LR: {lr}")
             elif lr_schedule == 'onecycle':
                 steps_per_epoch = len(train_loader) 
                 scheduler = optim.lr_scheduler.OneCycleLR(
@@ -305,42 +275,59 @@ class CrossValidationExperiment:
             best_model_path = os.path.join(fold_models_dir, 'best_model.pth')
             model.load_state_dict(torch.load(best_model_path))
             
-            self.logger.info(f"评估第 {fold+1} 折的模型...")
-            val_results = evaluate_model(
+            # Evaluate the current fold model on official validation set
+            self.logger.info(f"Evaluating fold {fold+1} model on official validation set...")
+            
+            from utils.visualization import visualize_iou_metrics
+            
+            # Create dataloader for official validation set
+            official_val_loader = DataLoader(
+                self.dataset_module.val_dataset,
+                batch_size=self.dataset_module.batch_size,
+                shuffle=False,
+                num_workers=self.dataset_module.num_workers,
+                pin_memory=True
+            )
+            
+            # Evaluate model performance on official validation set
+            official_val_results = evaluate_model(
                 model=model,
-                dataloader=val_loader,
+                dataloader=official_val_loader,
                 device=self.device,
                 num_classes=num_classes,
                 ignore_index=self.config.get('data', {}).get('ignore_index', 255)
             )
-            self.logger.info(f"第 {fold+1} 折评估完成！mIoU: {val_results['miou']:.4f}, 加权mIoU: {val_results['weighted_miou']:.4f}")
             
-            # Generate visualizations for this fold
+            self.logger.info(f"Fold {fold+1} evaluation on official validation set - mIoU: {official_val_results['miou']:.4f}, Weighted mIoU: {official_val_results['weighted_miou']:.4f}")
+            
+            # Generate visualizations for official validation set
+            official_fold_figures_dir = os.path.join(fold_figures_dir, 'official_val')
+            os.makedirs(official_fold_figures_dir, exist_ok=True)
+            
             visualize_predictions(
                 model=model,
-                dataloader=val_loader,
+                dataloader=official_val_loader,
                 device=self.device,
-                num_samples=min(3, len(val_loader)),
-                save_dir=fold_figures_dir
+                num_samples=min(3, len(official_val_loader)),
+                save_dir=official_fold_figures_dir
             )
             
             visualize_class_performance(
-                confusion_matrix=val_results['confusion_matrix'],
+                confusion_matrix=official_val_results['confusion_matrix'],
                 class_names=[f'Class {i}' for i in range(num_classes)],
-                save_path=os.path.join(fold_figures_dir, 'class_performance.png')
-            )
-            create_confusion_matrix_visualization(
-                confusion_matrix=val_results['confusion_matrix'],
-                class_names=[f'Class {i}' for i in range(num_classes)],
-                save_path=os.path.join(fold_figures_dir, 'confusion_matrix.png')
+                save_path=os.path.join(official_fold_figures_dir, 'class_performance.png')
             )
             
-            # 添加IoU指标可视化
-            from utils.visualization import visualize_iou_metrics
-            visualize_iou_metrics(
-                iou_per_class=val_results['iou_per_class'],
+            create_confusion_matrix_visualization(
+                confusion_matrix=official_val_results['confusion_matrix'],
                 class_names=[f'Class {i}' for i in range(num_classes)],
-                save_path=os.path.join(fold_figures_dir, 'iou_per_class.png')
+                save_path=os.path.join(official_fold_figures_dir, 'confusion_matrix.png')
+            )
+            
+            visualize_iou_metrics(
+                iou_per_class=official_val_results['iou_per_class'],
+                class_names=[f'Class {i}' for i in range(num_classes)],
+                save_path=os.path.join(official_fold_figures_dir, 'iou_per_class.png')
             )
             
             # Save results for this fold
@@ -348,7 +335,7 @@ class CrossValidationExperiment:
                 'fold': fold,
                 'train_metrics': train_metrics,
                 'val_metrics': val_metrics,
-                'val_results': val_results,
+                'official_val_results': official_val_results,
                 'best_epoch': trainer.best_epoch
             }
             
@@ -362,9 +349,9 @@ class CrossValidationExperiment:
             # Store fold results for aggregation
             cv_results['fold_results'].append(json_serializable_fold_results)
             
-            # Track best fold
-            if val_results['miou'] > cv_results['best_miou']:
-                cv_results['best_miou'] = val_results['miou']
+            # Track best fold based on official validation set
+            if official_val_results['miou'] > cv_results.get('best_miou', 0):
+                cv_results['best_miou'] = official_val_results['miou']
                 cv_results['best_fold'] = fold
                 
                 # Copy the best model to the experiment root directory
@@ -379,12 +366,14 @@ class CrossValidationExperiment:
             os.makedirs(all_fold_models_dir, exist_ok=True)
             torch.save(best_fold_model_state, os.path.join(all_fold_models_dir, f'fold_{fold}_best_model.pth'))
         
-        # Calculate aggregate statistics
-        mious = [fold_res['val_results']['miou'] for fold_res in cv_results['fold_results']]
-        cv_results['mean_miou'] = np.mean(mious)
-        cv_results['std_miou'] = np.std(mious)
+        # Calculate aggregate statistics for official validation set
+        official_mious = [fold_res['official_val_results']['miou'] for fold_res in cv_results['fold_results']]
+        cv_results['mean_miou'] = np.mean(official_mious)
+        cv_results['std_miou'] = np.std(official_mious)
+            
+        # Best fold is already tracked during the loop
         
-				###########################################################################################################
+        ###########################################################################################################
         # 实现多种"最佳"模型保存模式
         # 1. 平均权重模型 - 将所有折最佳模型的权重平均
         self.logger.info("创建平均权重模型...")
@@ -429,7 +418,7 @@ class CrossValidationExperiment:
         self.logger.info(f"创建Top-{k_best}折平均模型...")
         
         # 找到性能最好的k_best个折
-        fold_performances = [(fold, fold_res['val_results']['miou']) 
+        fold_performances = [(fold, fold_res['official_val_results']['miou']) 
                              for fold, fold_res in enumerate(cv_results['fold_results'])]
         top_k_folds = sorted(fold_performances, key=lambda x: x[1], reverse=True)[:k_best]
         
@@ -471,11 +460,11 @@ class CrossValidationExperiment:
         }
         
         # Generate aggregated validation metrics across folds
-        self.logger.info(f"交叉验证完成！平均 mIoU: {cv_results['mean_miou']:.4f} ± {cv_results['std_miou']:.4f}")
-        self.logger.info(f"最佳折: {cv_results['best_fold'] + 1}, mIoU: {cv_results['best_miou']:.4f}")
+        self.logger.info(f"Cross-validation completed! Average mIoU on official validation set: {cv_results['mean_miou']:.4f} ± {cv_results['std_miou']:.4f}")
+        self.logger.info(f"Best fold: {cv_results['best_fold'] + 1}, mIoU: {cv_results['best_miou']:.4f}")
         
         # Final evaluation on the official validation set using the best model
-        self.logger.info(f"使用最佳模型在官方验证集上进行最终评估...")
+        self.logger.info(f"Performing final evaluation on official validation set using the best model...")
         
         # Load best model from cross-validation
         best_model_path = os.path.join(self.models_dir, 'best_overall_model.pth')
@@ -500,10 +489,10 @@ class CrossValidationExperiment:
             ignore_index=self.config.get('data', {}).get('ignore_index', 255)
         )
         
-        self.logger.info(f"官方验证集评估结果 - mIoU: {val_results['miou']:.4f}, 加权mIoU: {val_results['weighted_miou']:.4f}")
+        self.logger.info(f"Official validation set evaluation results - mIoU: {val_results['miou']:.4f}, Weighted mIoU: {val_results['weighted_miou']:.4f}")
         
         # Save the official validation set results
-        cv_results['official_val_results'] = self.convert_numpy_to_python(val_results)
+        cv_results['final_val_results'] = self.convert_numpy_to_python(val_results)
         
         # Generate visualizations on the official validation set
         final_figures_dir = os.path.join(self.figures_dir, 'final_validation')
@@ -537,16 +526,16 @@ class CrossValidationExperiment:
         with open(results_path, 'w') as f:
             json.dump(cv_results, f, indent=4)
         
-        # 评估所有保存的模型
-        self.logger.info("评估所有保存的模型变体...")
+        # Evaluate all saved models
+        self.logger.info("Evaluating all saved model variants...")
         model_evaluation = self.evaluate_saved_models(num_classes=num_classes)
         cv_results['model_evaluation'] = self.convert_numpy_to_python(model_evaluation)
         
-        # 更新结果文件，包含模型评估信息
+        # Update results file with model evaluation information
         with open(results_path, 'w') as f:
             json.dump(cv_results, f, indent=4)
             
-        self.logger.info("交叉验证实验完成!")
+        self.logger.info("Cross-validation experiment completed!")
         
         return cv_results
     def plot_training_history(self, history, save_path=None):
@@ -613,25 +602,26 @@ class CrossValidationExperiment:
         """Plot cross-validation results."""
         # Extract mIoU values from each fold
         folds = list(range(1, len(cv_results['fold_results']) + 1))
-        mious = [fold_res['val_results']['miou'] for fold_res in cv_results['fold_results']]
+        official_mious = [fold_res['official_val_results']['miou'] for fold_res in cv_results['fold_results']]
         
         plt.figure(figsize=(12, 6))
         
         # Plot mIoU for each fold
-        plt.bar(folds, mious, color='skyblue')
-        plt.axhline(y=cv_results['mean_miou'], color='r', linestyle='-', 
-                   label=f"Mean mIoU: {cv_results['mean_miou']:.4f} ± {cv_results['std_miou']:.4f}")
+        bars = plt.bar(folds, official_mious, color='lightcoral')
+                                   
+        plt.axhline(y=cv_results['mean_miou'], color='red', linestyle='--', 
+                   label=f"Mean: {cv_results['mean_miou']:.4f} ± {cv_results['std_miou']:.4f}")
         
         plt.xlabel('Fold')
         plt.ylabel('mIoU')
-        plt.title('Cross-Validation Results')
+        plt.title('Cross-Validation Results on Official Validation Set')
         plt.xticks(folds)
         plt.grid(True, axis='y', linestyle='--', alpha=0.7)
         plt.legend()
         
         # Add values on top of bars
-        for i, miou in enumerate(mious):
-            plt.text(i+1, miou+0.01, f'{miou:.4f}', ha='center')
+        for i, miou in enumerate(official_mious):
+            plt.text(i+1, miou + 0.01, f'{miou:.4f}', ha='center', fontsize=9)
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.figures_dir, 'cv_results.png'))
@@ -653,18 +643,18 @@ class CrossValidationExperiment:
             return obj
             
     def evaluate_saved_models(self, num_classes=19):
-        """评估所有保存的模型并比较它们的性能。
+        """Evaluate all saved models and compare their performance.
         
-        此方法会加载在交叉验证过程中保存的不同类型的模型，
-        在验证集上评估它们的性能，并生成比较报告。
+        This method loads different types of models saved during cross-validation,
+        evaluates their performance on the validation set, and generates a comparison report.
         
         Args:
-            num_classes: 类别数量
+            num_classes: Number of classes
             
         Returns:
-            评估结果的字典
+            Dictionary of evaluation results
         """
-        self.logger.info("开始评估所有保存的模型...")
+        self.logger.info("Starting evaluation of all saved models...")
         
         # 创建验证数据加载器
         val_loader = DataLoader(
@@ -675,15 +665,15 @@ class CrossValidationExperiment:
             pin_memory=True
         )
         
-        # 获取需要评估的模型路径
+        # Get paths of models to evaluate
         model_paths = {}
         
-        # 1. 最佳单折模型
+        # 1. Best single fold model
         best_model_path = os.path.join(self.models_dir, 'best_overall_model.pth')
         if os.path.exists(best_model_path):
             model_paths['best_single_fold'] = best_model_path
         
-        # 2. 平均权重模型
+        # 2. Average weights model
         avg_model_path = os.path.join(self.models_dir, 'avg_weights_model.pth')
         if os.path.exists(avg_model_path):
             model_paths['avg_weights'] = avg_model_path
@@ -700,14 +690,14 @@ class CrossValidationExperiment:
         
         # 评估每个模型
         for model_name, model_path in model_paths.items():
-            self.logger.info(f"评估模型: {model_name}")
+            self.logger.info(f"Evaluating model: {model_name}")
             
-            # 加载模型
+            # Load model
             model = self.model_class(num_classes=num_classes).to(self.device)
             model.load_state_dict(torch.load(model_path))
             model.eval()
             
-            # 在验证集上评估
+            # Evaluate on validation set
             val_results = evaluate_model(
                 model=model,
                 dataloader=val_loader,
@@ -716,7 +706,7 @@ class CrossValidationExperiment:
                 ignore_index=self.config.get('data', {}).get('ignore_index', 255)
             )
             
-            self.logger.info(f"{model_name} - mIoU: {val_results['miou']:.4f}, 加权mIoU: {val_results['weighted_miou']:.4f}")
+            self.logger.info(f"{model_name} - mIoU: {val_results['miou']:.4f}, Weighted mIoU: {val_results['weighted_miou']:.4f}")
             
             # 保存结果
             results[model_name] = {
@@ -726,36 +716,36 @@ class CrossValidationExperiment:
                 'pixel_accuracy': val_results.get('pixel_accuracy', None)
             }
         
-        # 保存评估结果
+        # Save evaluation results
         model_eval_dir = os.path.join(self.figures_dir, 'model_evaluation')
         os.makedirs(model_eval_dir, exist_ok=True)
         
-        # 保存结果为JSON
+        # Save results as JSON
         eval_results_path = os.path.join(model_eval_dir, 'model_comparison.json')
         with open(eval_results_path, 'w') as f:
             json.dump(self.convert_numpy_to_python(results), f, indent=4)
             
-        # 绘制比较图
+        # Plot comparison charts
         self._plot_model_comparison(results, save_dir=model_eval_dir)
         
-        self.logger.info(f"模型评估完成，结果保存在: {eval_results_path}")
+        self.logger.info(f"Model evaluation completed, results saved to: {eval_results_path}")
         return results
     
     def _plot_model_comparison(self, results, save_dir):
-        """绘制不同模型之间的性能比较图。"""
+        """Plot performance comparison between different models."""
         model_names = list(results.keys())
         mious = [results[name]['miou'] for name in model_names]
         weighted_mious = [results[name]['weighted_miou'] for name in model_names]
         
-        # 设置图形大小和风格
+        # Set figure size and style
         plt.figure(figsize=(14, 8))
         plt.style.use('ggplot')
         
-        # 柱状图宽度
+        # Bar width
         width = 0.35
         x = np.arange(len(model_names))
         
-        # 创建柱状图
+        # Create bar charts
         bar1 = plt.bar(x - width/2, mious, width, label='mIoU', color='skyblue')
         bar2 = plt.bar(x + width/2, weighted_mious, width, label='Weighted mIoU', color='lightcoral')
           # 添加标题和标签 (使用英文替代中文)

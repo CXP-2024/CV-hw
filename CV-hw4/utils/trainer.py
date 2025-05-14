@@ -260,9 +260,10 @@ class Trainer:
             
             # 调整学习率，根据调度器类型
             if self.scheduler:
-                # 如果是CosineAnnealingLR或OneCycleLR，则每个epoch更新一次
+                # 如果是CosineAnnealingLR、OneCycleLR或CosineAnnealingWarmRestarts，则每个epoch更新一次
                 if isinstance(self.scheduler, (torch.optim.lr_scheduler.CosineAnnealingLR, 
-                                             torch.optim.lr_scheduler.OneCycleLR)):
+                                             torch.optim.lr_scheduler.OneCycleLR,
+                                             torch.optim.lr_scheduler.CosineAnnealingWarmRestarts)):
                     self.scheduler.step()
                     current_lr = self.optimizer.param_groups[0]['lr']
                     self.logger.info(f"学习率更新为: {current_lr:.6f}")

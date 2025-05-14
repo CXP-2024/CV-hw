@@ -63,6 +63,9 @@ def main(args):
         if not os.path.exists(pretrained_path):
             raise FileNotFoundError(f"Pretrained model file not found: {pretrained_path}")
     
+    # Get augmentation level (command line arg overrides config)
+    augmentation_level = args.augmentation_level if args.augmentation_level else config['data'].get('augmentation_level', 'standard')
+    
     # Setup data module
     data_module = CityscapesDataModule(
         data_dir=config['data']['root'],
@@ -70,7 +73,8 @@ def main(args):
         num_workers=args.num_workers,
         k_folds=config['training']['k_folds'],  # Not used in simple experiment, but kept for compatibility
         image_size=tuple(config['data']['image_size']),
-        augment=config['data']['augment']
+        augment=config['data']['augment'],
+        augmentation_level=augmentation_level
     )
     
     # Setup experiment
@@ -121,6 +125,8 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=0, help='Number of epochs to train (0 = use config value)')
     parser.add_argument('--resume', type=str, default='', help='Path to checkpoint to resume training from')
     parser.add_argument('--pretrained', type=str, default='', help='Path to pretrained model weights to use as initialization')
+    parser.add_argument('--augmentation_level', type=str, default=None, choices=['none', 'standard', 'advanced'], 
+                        help='Augmentation level to use (overrides config value)')
     
     args = parser.parse_args()
     main(args)

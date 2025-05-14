@@ -5,7 +5,7 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from PIL import Image
+from PIL import Image, ImageFilter
 import torchvision.transforms as transforms
 from torchvision.transforms import functional as TF
 from torch.utils.data import DataLoader, random_split, SubsetRandomSampler
@@ -13,14 +13,281 @@ import glob
 import random
 from collections import namedtuple
 from sklearn.model_selection import KFold
+import logging
+import copy
+import cv2
+from scipy.ndimage import gaussian_filter
 
 # Import the cityscapes labels
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'cityscapesScripts-master'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'cityscapesScripts'))
 from cityscapesscripts.helpers.labels import labels as cs_labels
 
 # Define the Cityscapes Class Information
 Label = namedtuple('Label', ['name', 'id', 'trainId', 'category', 'categoryId', 'hasInstances', 'ignoreInEval', 'color'])
+
+# Define a logger for debugging
+logger = logging.getLogger(__name__)
+
+class SynchronizedTransforms:
+    """Class to apply synchronized transforms to both image and mask"""
+    
+    def __init__(self, image_size=(512, 1024), augmentation_level='none', ignore_index=255):
+        """
+        Args:
+            image_size (tuple): Target image size (height, width)
+            augmentation_level (str): Level of augmentation to apply ('none', 'standard', 'advanced')
+            ignore_index (int): Index to use for padding in the segmentation mask
+        """
+        self.image_size = image_size
+        self.augmentation_level = augmentation_level
+        self.ignore_index = ignore_index
+    
+    def __call__(self, image, mask):
+        """
+        Apply synchronized transforms to both image and mask
+        
+        Args:
+            image (PIL.Image): The input image
+            mask (PIL.Image): The segmentation mask
+            
+        Returns:
+            tuple: (transformed_image, transformed_mask)
+        """
+        # First, ensure both inputs are PIL images
+        if not isinstance(image, Image.Image) or not isinstance(mask, Image.Image):
+            raise TypeError("Both image and mask should be PIL Image objects")
+            
+        # Always resize to ensure images match required size
+        if image.size != (self.image_size[1], self.image_size[0]):  # PIL uses (width, height)
+            image = TF.resize(image, self.image_size, interpolation=Image.BILINEAR)
+            mask = TF.resize(mask, self.image_size, interpolation=Image.NEAREST)
+            
+        # If no augmentation is requested, return early
+        if self.augmentation_level == 'none':
+            return image, mask
+            
+        # Apply standard augmentations
+        if self.augmentation_level in ['standard', 'advanced']:
+            #print("Applying standard augmentations...")
+            # Random horizontal flipping (50% probability)
+            if random.random() > 0.5:
+                image = TF.hflip(image)
+                mask = TF.hflip(mask)
+            
+            # Random brightness, contrast, and saturation (60% probability)
+            # Only applied to image, not mask
+            if random.random() > 0.4:
+                brightness_factor = random.uniform(0.8, 1.2)
+                contrast_factor = random.uniform(0.8, 1.2)
+                saturation_factor = random.uniform(0.8, 1.2)
+                
+                image = TF.adjust_brightness(image, brightness_factor)
+                image = TF.adjust_contrast(image, contrast_factor)
+                image = TF.adjust_saturation(image, saturation_factor)
+            
+            # Random rotation (small angles, -10 to 10 degrees, 30% probability)
+            if random.random() > 0.7:
+                angle = random.uniform(-10, 10)
+                image = TF.rotate(image, angle, interpolation=Image.BILINEAR, fill=0)
+                mask = TF.rotate(mask, angle, interpolation=Image.NEAREST, fill=self.ignore_index)
+            
+            # Random scaling (0.8 to 1.2, 50% probability)
+            if random.random() > 0.5:
+                scale_factor = random.uniform(0.8, 1.2)
+                new_height = int(self.image_size[0] * scale_factor)
+                new_width = int(self.image_size[1] * scale_factor)
+                
+                image = TF.resize(image, (new_height, new_width), interpolation=Image.BILINEAR)
+                mask = TF.resize(mask, (new_height, new_width), interpolation=Image.NEAREST)
+                
+                # If scaled image is smaller than target size, we need to pad
+                if new_height < self.image_size[0] or new_width < self.image_size[1]:
+                    # Calculate padding
+                    padding_height = max(0, self.image_size[0] - new_height)
+                    padding_width = max(0, self.image_size[1] - new_width)
+                    
+                    padding_top = padding_height // 2
+                    padding_bottom = padding_height - padding_top
+                    padding_left = padding_width // 2
+                    padding_right = padding_width - padding_left
+                    
+                    # Pad with zeros for image, ignore_index for mask
+                    padding = (padding_left, padding_top, padding_right, padding_bottom)
+                    image = TF.pad(image, padding, fill=0)
+                    mask = TF.pad(mask, padding, fill=self.ignore_index)
+                
+                # If scaled image is larger than target size, we need to crop
+                elif new_height > self.image_size[0] or new_width > self.image_size[1]:
+                    # Calculate crop
+                    i = (new_height - self.image_size[0]) // 2 if new_height > self.image_size[0] else 0
+                    j = (new_width - self.image_size[1]) // 2 if new_width > self.image_size[1] else 0
+                    h, w = self.image_size
+                    
+                    # Crop both image and mask
+                    image = TF.crop(image, i, j, h, w)
+                    mask = TF.crop(mask, i, j, h, w)
+        
+        # Advanced augmentations
+        if self.augmentation_level == 'advanced':
+            # Random vertical flipping (10% probability) - careful with this for street scenes
+            if random.random() > 0.9:
+                image = TF.vflip(image)
+                mask = TF.vflip(mask)
+            
+            # Random perspective transformation (15% probability)
+            if random.random() > 0.85:
+                try:
+                    # Get dimensions using the size property
+                    width, height = image.size
+                    
+                    # Define perspective parameters - using lists as required by TF.perspective
+                    startpoints = [
+                        [0, 0],  # top-left
+                        [width - 1, 0],  # top-right
+                        [width - 1, height - 1],  # bottom-right
+                        [0, height - 1],  # bottom-left
+                    ]
+                    
+                    # Perturb the corner points slightly (within 5% of image dimensions)
+                    width_offset = width * 0.05
+                    height_offset = height * 0.05
+                    
+                    # Generate endpoints with randomized offsets using uniform distribution for smoother results
+                    endpoints = [
+                        [startpoints[0][0] + random.uniform(-width_offset, width_offset),
+                         startpoints[0][1] + random.uniform(-height_offset, height_offset)],
+                        [startpoints[1][0] + random.uniform(-width_offset, width_offset),
+                         startpoints[1][1] + random.uniform(-height_offset, height_offset)],
+                        [startpoints[2][0] + random.uniform(-width_offset, width_offset),
+                         startpoints[2][1] + random.uniform(-height_offset, height_offset)],
+                        [startpoints[3][0] + random.uniform(-width_offset, width_offset),
+                         startpoints[3][1] + random.uniform(-height_offset, height_offset)],
+                    ]
+                    
+                    image = TF.perspective(image, startpoints, endpoints, fill=0)
+                    mask = TF.perspective(mask, startpoints, endpoints, fill=self.ignore_index, interpolation=Image.NEAREST)
+                except Exception as e:
+                    logger.warning(f"透视变换失败，跳过: {e}")
+            
+            # Random color channel swapping (10% probability)
+            if random.random() > 0.9:
+                img_np = np.array(image)
+                # Randomly swap color channels
+                channels = list(range(3))
+                random.shuffle(channels)
+                img_np = img_np[..., channels]
+                image = Image.fromarray(img_np)
+            
+            # Random grayscale conversion (10% probability)
+            if random.random() > 0.9:
+                image = TF.rgb_to_grayscale(image, num_output_channels=3)
+            
+            # Random Gaussian blur (20% probability)
+            if random.random() > 0.8:
+                # Use a smaller kernel for smaller images
+                kernel_size = int(min(self.image_size) * 0.03) | 1  # Make sure it's odd
+                kernel_size = max(3, kernel_size)  # At least size 3
+                image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.1, 1.0)))
+            
+            # Random cutout/erase (10% probability)
+            if random.random() > 0.9:
+                # Create a cutout with random size (up to 20% of image)
+                width, height = image.size
+                cutout_size_x = int(width * random.uniform(0.05, 0.2))
+                cutout_size_y = int(height * random.uniform(0.05, 0.2))
+                
+                # Random position
+                x = random.randint(0, width - cutout_size_x - 1)
+                y = random.randint(0, height - cutout_size_y - 1)
+                
+                # Apply cutout (black rectangle) to image
+                img_array = np.array(image)
+                img_array[y:y+cutout_size_y, x:x+cutout_size_x, :] = 0
+                image = Image.fromarray(img_array)
+                
+                # For mask, fill with ignore_index
+                mask_array = np.array(mask)
+                mask_array[y:y+cutout_size_y, x:x+cutout_size_x] = self.ignore_index
+                mask = Image.fromarray(mask_array.astype(np.uint8))
+            
+            # Random elastic transformation (10% probability)
+            if random.random() > 0.9:
+                try:
+                    # Create random displacement fields
+                    width, height = image.size
+                    x_grid, y_grid = np.meshgrid(np.arange(width), np.arange(height))
+                    
+                    # Create random displacement with gaussian filter
+                    # The strength of the displacement is controlled by the sigma and alpha parameters
+                    sigma = random.uniform(5, 10)
+                    alpha = random.uniform(30, 60)
+                    
+                    # Create random displacement fields
+                    dx = np.random.rand(height, width) * 2 - 1
+                    dy = np.random.rand(height, width) * 2 - 1
+                    
+                    # Blur the displacement fields
+                    dx = gaussian_filter(dx, sigma) * alpha
+                    dy = gaussian_filter(dy, sigma) * alpha
+                    
+                    # Create the distorted grids
+                    x_map = (x_grid + dx).astype(np.float32)
+                    y_map = (y_grid + dy).astype(np.float32)
+                    
+                    # Convert PIL images to numpy arrays
+                    img_np = np.array(image)
+                    mask_np = np.array(mask)
+                    
+                    # Apply transformation
+                    img_distorted = cv2.remap(img_np, x_map, y_map, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+                    mask_distorted = cv2.remap(mask_np, x_map, y_map, interpolation=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
+                    
+                    # Convert back to PIL images
+                    image = Image.fromarray(img_distorted)
+                    mask = Image.fromarray(mask_distorted)
+                except Exception as e:
+                    logger.warning(f"弹性变换失败，跳过: {e}")
+            
+            # Image mixup (5% probability)
+            if random.random() > 0.95:
+                # We'll simulate a simple mixup by blending the original image with a 
+                # random scaling/rotation/brightness variation of itself
+                # Create a transformed version of the current image
+                mixed_image = image.copy()
+                
+                # Apply some transformations to this copy
+                if random.random() > 0.5:
+                    mixed_image = TF.hflip(mixed_image)
+                
+                # Random brightness and contrast
+                brightness_factor = random.uniform(0.7, 1.3)
+                contrast_factor = random.uniform(0.7, 1.3)
+                saturation_factor = random.uniform(0.7, 1.3)
+                
+                mixed_image = TF.adjust_brightness(mixed_image, brightness_factor)
+                mixed_image = TF.adjust_contrast(mixed_image, contrast_factor)
+                mixed_image = TF.adjust_saturation(mixed_image, saturation_factor)
+                
+                # Apply a random rotation
+                angle = random.uniform(-15, 15)
+                mixed_image = TF.rotate(mixed_image, angle, interpolation=Image.BILINEAR, fill=0)
+                
+                # Blend the original and transformed image
+                alpha = random.uniform(0.4, 0.6)
+                img_np = np.array(image).astype(float) * alpha
+                mixed_np = np.array(mixed_image).astype(float) * (1 - alpha)
+                blended = np.clip(img_np + mixed_np, 0, 255).astype(np.uint8)
+                
+                # Update the image with the blended result
+                image = Image.fromarray(blended)
+        
+        # Ensure image is the right size after all transformations
+        if image.size != (self.image_size[1], self.image_size[0]):  # PIL uses (width, height)
+            image = TF.resize(image, self.image_size, interpolation=Image.BILINEAR)
+            mask = TF.resize(mask, self.image_size, interpolation=Image.NEAREST)
+            
+        return image, mask
 
 # Get classes with valid trainIds (ignore 255 and -1)
 valid_classes = [label for label in cs_labels if label.trainId != 255 and label.trainId != -1]
@@ -62,19 +329,34 @@ def decode_segmap(segmap, colors=None):
 class CityscapesDataset(Dataset):
     """Cityscapes dataset for semantic segmentation."""
 
-    def __init__(self, root_dir, split='train', transform=None, target_transform=None):
+    def __init__(self, root_dir, split='train', transform=None, target_transform=None,
+                 augmentation_level='none', image_size=(512, 1024), is_training=True):
         """
         Args:
             root_dir (string): Directory with all the images.
             split (string): 'train', 'val', or 'test' split.
             transform (callable, optional): Optional transform to be applied on the input image.
             target_transform (callable, optional): Optional transform to be applied on the target mask.
+            augmentation_level (str): Level of augmentation to apply ('none', 'standard', 'advanced')
+            image_size (tuple): Target image size as (height, width)
+            is_training (bool): Whether this dataset is used for training (affects augmentation)
         """
         self.root_dir = root_dir
         self.split = split
         self.transform = transform
         self.target_transform = target_transform
+        self.augmentation_level = augmentation_level if is_training else 'none'
+        self.image_size = image_size
+        self.is_training = is_training
+        self.ignore_index = 255
 
+        # Create synchronized transforms handler
+        self.sync_transforms = SynchronizedTransforms(
+            image_size=image_size,
+            augmentation_level=self.augmentation_level,
+            ignore_index=self.ignore_index
+        )
+        
         # Get the file paths
         self.image_paths = sorted(glob.glob(os.path.join(
             self.root_dir, 'leftImg8bit', self.split, '*', '*_leftImg8bit.png')))
@@ -94,6 +376,10 @@ class CityscapesDataset(Dataset):
 
         assert len(self.image_paths) == len(self.label_paths), "Images and labels don't match!"
         print(f"Found {len(self.image_paths)} images in {self.split} set")
+        
+        # Log augmentation level
+        if self.augmentation_level != 'none':
+            print(f"Using {self.augmentation_level} level augmentation for {self.split} set")
 
     def __len__(self):
         return len(self.image_paths)
@@ -107,12 +393,12 @@ class CityscapesDataset(Dataset):
         label_path = self.label_paths[idx]
         label = Image.open(label_path)
 
-        # Apply transformations if any
+        # Apply synchronized transformations (augmentations and resize)
+        image, label = self.sync_transforms(image, label)
+        
+        # Apply any additional image-specific transformations
         if self.transform:
             image = self.transform(image)
-            
-        if self.target_transform:
-            label = self.target_transform(label)
             
         # Convert label to numpy array
         label_np = np.array(label, dtype=np.int64)
@@ -122,8 +408,8 @@ class CityscapesDataset(Dataset):
             label_np[label_np == k] = v
         
         # Ignore regions with trainId 255 or -1
-        label_np[label_np == 255] = 255  # Keep ignore regions as 255
-        label_np[label_np == -1] = 255   # Map -1 to 255 for ignore
+        label_np[label_np == 255] = self.ignore_index  # Keep ignore regions as ignore_index
+        label_np[label_np == -1] = self.ignore_index   # Map -1 to ignore_index
         
         # Convert to torch tensor
         label = torch.from_numpy(label_np)
@@ -162,7 +448,8 @@ class CityscapesDataset(Dataset):
 class CityscapesDataModule:
     """DataModule for Cityscapes dataset with support for cross-validation."""
 
-    def __init__(self, data_dir, batch_size=4, num_workers=4, k_folds=5, image_size=(512, 1024), augment=True):
+    def __init__(self, data_dir, batch_size=4, num_workers=4, k_folds=5, image_size=(512, 1024), augment=True, 
+                 augmentation_level='standard'):
         """
         Args:
             data_dir: Path to the data directory
@@ -171,6 +458,7 @@ class CityscapesDataModule:
             k_folds: Number of folds for cross-validation
             image_size: Target image size (height, width)
             augment: Whether to use data augmentation
+            augmentation_level: Level of augmentation to apply ('none', 'standard', 'advanced')
         """
         self.data_dir = data_dir
         self.batch_size = batch_size
@@ -178,206 +466,144 @@ class CityscapesDataModule:
         self.k_folds = k_folds
         self.image_size = image_size
         self.augment = augment
+        self.augmentation_level = augmentation_level if augment else 'none'
         
-        # Define transforms
+        # Define transforms - these are now applied after synchronized transforms in the dataset
         self.train_transform = transforms.Compose([
-            transforms.Resize(image_size),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
         
         self.val_transform = transforms.Compose([
-            transforms.Resize(image_size),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
         
-        # Define target transforms
-        self.target_transform = transforms.Compose([
-            transforms.Resize(image_size, interpolation=transforms.InterpolationMode.NEAREST),
-        ])
+        logger.info(f"CityscapesDataModule initialized with augmentation level: {self.augmentation_level}")
         
     def setup(self):
         """Prepare the datasets."""
+        # Training dataset with augmentations
         self.train_dataset = CityscapesDataset(
             root_dir=self.data_dir,
             split='train',
             transform=self.train_transform,
-            target_transform=self.target_transform
+            augmentation_level=self.augmentation_level,
+            image_size=self.image_size,
+            is_training=True
         )
         
+        # Validation dataset without augmentations
         self.val_dataset = CityscapesDataset(
             root_dir=self.data_dir,
             split='val',
             transform=self.val_transform,
-            target_transform=self.target_transform
+            augmentation_level='none',  # No augmentation for validation
+            image_size=self.image_size,
+            is_training=False
         )
         
+        # Test dataset without augmentations
         self.test_dataset = CityscapesDataset(
             root_dir=self.data_dir,
             split='test',
             transform=self.val_transform,
-            target_transform=self.target_transform
+            augmentation_level='none',  # No augmentation for test
+            image_size=self.image_size,
+            is_training=False
+        )
+        
+        logger.info(f"Datasets prepared - Train: {len(self.train_dataset)}, Val: {len(self.val_dataset)}, Test: {len(self.test_dataset)}")
+    
+    def get_train_dataloader(self):
+        """Get the training dataloader."""
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=True
         )
     
-    def setup_fold(self, fold_idx):
-        """Setup train/val datasets for a specific fold."""
-        # Use only the train dataset for cross-validation
-        dataset = CityscapesDataset(
-            root_dir=self.data_dir,
-            split='train',
-            transform=None,  # Will be applied later
-            target_transform=None  # Will be applied later
+    def get_val_dataloader(self):
+        """Get the validation dataloader."""
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True
+        )
+    
+    def get_test_dataloader(self):
+        """Get the test dataloader."""
+        return DataLoader(
+            self.test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True
         )
         
-        # Setup KFold
+    def get_cross_val_dataloaders(self, fold_idx):
+        """
+        Get training and validation dataloaders for a specific fold.
+        This method is added for compatibility with the k-fold cross-validation.
+        
+        Args:
+            fold_idx (int): The index of the current fold
+            
+        Returns:
+            tuple: (train_loader, val_loader) for the specified fold
+        """
+        # Make sure the dataset is set up
+        if not hasattr(self, 'train_dataset'):
+            self.setup()
+            
+        # Create a copy of the training dataset with the same augmentation settings
+        dataset = copy.deepcopy(self.train_dataset)
+        dataset_size = len(dataset)
+        indices = list(range(dataset_size))
+        
+        # Use KFold from sklearn to split indices
         kfold = KFold(n_splits=self.k_folds, shuffle=True, random_state=42)
+        folds = list(kfold.split(indices))
         
-        # Get train/val indices for the current fold
-        splits = list(kfold.split(range(len(dataset))))
-        train_idx, val_idx = splits[fold_idx]
+        # Get train and validation indices for current fold
+        train_indices, val_indices = folds[fold_idx]
         
-        # Create samplers
-        train_sampler = SubsetRandomSampler(train_idx)
-        val_sampler = SubsetRandomSampler(val_idx)
+        # Create samplers for train and validation sets
+        train_sampler = SubsetRandomSampler(train_indices)
+        val_sampler = SubsetRandomSampler(val_indices)
         
-        # Create dataloaders with proper transforms
+        # For validation fold, we create a separate dataset with no augmentation
+        val_dataset = copy.deepcopy(self.train_dataset)
+        val_dataset.augmentation_level = 'none'  # Disable augmentation for validation
+        val_dataset.is_training = False
+        val_dataset.sync_transforms = SynchronizedTransforms(
+            image_size=self.image_size,
+            augmentation_level='none',
+            ignore_index=255
+        )
+        
+        # Create dataloaders
         train_loader = DataLoader(
-            dataset=dataset,
+            dataset,
             batch_size=self.batch_size,
             sampler=train_sampler,
             num_workers=self.num_workers,
-            pin_memory=True,
-            collate_fn=lambda batch: self._collate_with_transform(batch, is_train=True)
+            pin_memory=True
         )
         
         val_loader = DataLoader(
-            dataset=dataset,
+            val_dataset,
             batch_size=self.batch_size,
             sampler=val_sampler,
             num_workers=self.num_workers,
-            pin_memory=True,
-            collate_fn=lambda batch: self._collate_with_transform(batch, is_train=False)
+            pin_memory=True
         )
         
-        return train_loader, val_loader
-    
-    def get_cross_validation_folds(self):
-        """
-        Get cross-validation folds.
-        
-        Returns:
-            List of dictionaries containing train and val data loaders for each fold.
-        """
-        cv_folds = []
-        
-        for fold_idx in range(self.k_folds):
-            train_loader, val_loader = self.setup_fold(fold_idx)
-            fold_data = {
-                'train_loader': train_loader,
-                'val_loader': val_loader,
-                'fold_idx': fold_idx
-            }
-            cv_folds.append(fold_data)
-        
-        return cv_folds
-    
-    def _collate_with_transform(self, batch, is_train=True):
-        """Custom collate function that applies transforms."""
-        images = []
-        targets = []
-        
-        for img, target in batch:
-            # Apply transforms
-            if is_train:
-                # Apply data augmentation to both image and target during training if enabled
-                if self.augment:
-                    # Synchronized transformations for image and target
-                    img, target = self._apply_sync_transforms(img, target)
-                    # Add logging to indicate augmentation is working
-                    if random.random() > 0.99:  # Only log 1% of the time to avoid excessive output
-                        print("数据增强已应用: 图像大小 =", img.size)
-                    
-                # Apply other transforms
-                img = self.train_transform(img)
-            else:
-                img = self.val_transform(img)
-                
-            # Apply resizing first while still in PIL format
-            target = target.resize(self.image_size, Image.NEAREST)
-            
-            # Convert to numpy and apply mapping
-            target_np = np.array(target, dtype=np.int64)
-            
-            # Map the IDs to train IDs
-            for k, v in id_to_trainid.items():
-                target_np[target_np == k] = v
-            
-            # Ignore regions with trainId 255 or -1
-            target_np[target_np == 255] = 255
-            target_np[target_np == -1] = 255
-            
-            target = torch.from_numpy(target_np)
-            
-            images.append(img)
-            targets.append(target)
-        
-        # Stack batches
-        images = torch.stack(images, 0)
-        targets = torch.stack(targets, 0)
-        
-        return images, targets
-    
-    def _apply_sync_transforms(self, img, target):
-        """Apply synchronized transformations to both image and target."""
-        # Random horizontal flipping (50% probability)
-        if random.random() > 0.5:
-            img = TF.hflip(img)
-            target = TF.hflip(target)
-        
-        # Random rotation (small angles, -10 to 10 degrees, 30% probability)
-        if random.random() > 0.7:
-            angle = random.uniform(-10, 10)
-            img = TF.rotate(img, angle, interpolation=Image.BILINEAR, fill=0)
-            target = TF.rotate(target, angle, interpolation=Image.NEAREST, fill=255)
-        
-        # Random scaling (0.8 to 1.2, 50% probability)
-        if random.random() > 0.5:
-            scale_factor = random.uniform(0.8, 1.2)
-            new_height = int(img.height * scale_factor)
-            new_width = int(img.width * scale_factor)
-            img = TF.resize(img, (new_height, new_width), interpolation=Image.BILINEAR)
-            target = TF.resize(target, (new_height, new_width), interpolation=Image.NEAREST)
-            
-        # Random cropping (40% probability, only if image is larger than target size)
-        if random.random() > 0.6 and img.width > self.image_size[1] and img.height > self.image_size[0]:
-            i, j, h, w = transforms.RandomCrop.get_params(img, output_size=self.image_size)
-            img = TF.crop(img, i, j, h, w)
-            target = TF.crop(target, i, j, h, w)
-        else:
-            # Ensure image is the right size
-            img = TF.resize(img, self.image_size, interpolation=Image.BILINEAR)
-            target = TF.resize(target, self.image_size, interpolation=Image.NEAREST)
-        
-        # Color jittering (brightness, contrast, saturation) - only applied to image, not target
-        if random.random() > 0.5:
-            brightness_factor = random.uniform(0.8, 1.2)
-            contrast_factor = random.uniform(0.8, 1.2)
-            saturation_factor = random.uniform(0.8, 1.2)
-            
-            img = TF.adjust_brightness(img, brightness_factor)
-            img = TF.adjust_contrast(img, contrast_factor)
-            img = TF.adjust_saturation(img, saturation_factor)
-        
-        # Random Gaussian blur (15% probability, only applied to image)
-        if random.random() > 0.85:
-            img_tensor = TF.to_tensor(img).unsqueeze(0)
-            kernel_size = random.choice([3, 5])
-            sigma = random.uniform(0.1, 2.0)
-            img_tensor = transforms.GaussianBlur(kernel_size, sigma=sigma)(img_tensor)
-            img = TF.to_pil_image(img_tensor.squeeze(0))
-            
-        return img, target
+        return train_loader, val_loader, len(train_indices), len(val_indices)
 
     def get_train_dataloader(self):
         """Get the training dataloader."""
@@ -408,3 +634,120 @@ class CityscapesDataModule:
             num_workers=self.num_workers,
             pin_memory=True
         )
+    
+    def test_augmentation(self, num_samples=3, save_dir=None):
+        """
+        Test and visualize augmentation results on a few samples.
+        
+        Args:
+            num_samples (int): Number of samples to test
+            save_dir (str): Directory to save visualization
+        """
+        import matplotlib.pyplot as plt
+        from datetime import datetime
+        
+        if save_dir is None:
+            save_dir = f"outputs/augmentation_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Make sure datasets are set up
+        if not hasattr(self, 'train_dataset'):
+            self.setup()
+        
+        # Create a copy of the dataset with standard augmentation
+        standard_dataset = copy.deepcopy(self.train_dataset)
+        standard_dataset.augmentation_level = 'standard'
+        standard_dataset.sync_transforms = SynchronizedTransforms(
+            image_size=self.image_size,
+            augmentation_level='standard',
+            ignore_index=255
+        )
+        
+        # Create a copy with advanced augmentation
+        advanced_dataset = copy.deepcopy(self.train_dataset)
+        advanced_dataset.augmentation_level = 'advanced'
+        advanced_dataset.sync_transforms = SynchronizedTransforms(
+            image_size=self.image_size,
+            augmentation_level='advanced',
+            ignore_index=255
+        )
+        
+        # Create a copy with no augmentation
+        none_dataset = copy.deepcopy(self.train_dataset)
+        none_dataset.augmentation_level = 'none'
+        none_dataset.sync_transforms = SynchronizedTransforms(
+            image_size=self.image_size,
+            augmentation_level='none',
+            ignore_index=255
+        )
+        
+        # Test on a few random samples
+        indices = random.sample(range(len(self.train_dataset)), num_samples)
+        
+        for idx in indices:
+            # Get the same image with different augmentation levels
+            img_none, mask_none = none_dataset[idx]
+            img_std, mask_std = standard_dataset[idx]
+            img_adv, mask_adv = advanced_dataset[idx]
+            
+            # Convert tensors to numpy for visualization
+            img_none = img_none.permute(1, 2, 0).numpy()
+            img_none = (img_none * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])) * 255
+            img_none = np.clip(img_none, 0, 255).astype(np.uint8)
+            
+            img_std = img_std.permute(1, 2, 0).numpy()
+            img_std = (img_std * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])) * 255
+            img_std = np.clip(img_std, 0, 255).astype(np.uint8)
+            
+            img_adv = img_adv.permute(1, 2, 0).numpy()
+            img_adv = (img_adv * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])) * 255
+            img_adv = np.clip(img_adv, 0, 255).astype(np.uint8)
+            
+            # Colorize masks for visualization
+            mask_none_vis = decode_segmap(mask_none.numpy())
+            mask_std_vis = decode_segmap(mask_std.numpy())
+            mask_adv_vis = decode_segmap(mask_adv.numpy())
+            
+            # Create a figure with 3 rows and 2 columns
+            plt.figure(figsize=(12, 18))
+            
+            # No augmentation
+            plt.subplot(3, 2, 1)
+            plt.imshow(img_none)
+            plt.title('No Augmentation - Image')
+            plt.axis('off')
+            
+            plt.subplot(3, 2, 2)
+            plt.imshow(mask_none_vis)
+            plt.title('No Augmentation - Mask')
+            plt.axis('off')
+            
+            # Standard augmentation
+            plt.subplot(3, 2, 3)
+            plt.imshow(img_std)
+            plt.title('Standard Augmentation - Image')
+            plt.axis('off')
+            
+            plt.subplot(3, 2, 4)
+            plt.imshow(mask_std_vis)
+            plt.title('Standard Augmentation - Mask')
+            plt.axis('off')
+            
+            # Advanced augmentation
+            plt.subplot(3, 2, 5)
+            plt.imshow(img_adv)
+            plt.title('Advanced Augmentation - Image')
+            plt.axis('off')
+            
+            plt.subplot(3, 2, 6)
+            plt.imshow(mask_adv_vis)
+            plt.title('Advanced Augmentation - Mask')
+            plt.axis('off')
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f'augmentation_sample_{idx}.png'))
+            plt.close()
+        
+        logger.info(f"Augmentation test results saved to {save_dir}")
+        return save_dir

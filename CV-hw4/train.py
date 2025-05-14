@@ -10,13 +10,8 @@ import random
 import numpy as np
 from datetime import datetime
 
-# 导入数据集模块，优先使用增强版
-try:
-    from datasets import EnhancedCityscapesDataModule as CityscapesDataModule, num_classes
-    print("成功导入增强版数据增强模块")
-except ImportError:
-    from datasets import CityscapesDataModule, num_classes
-    print("使用标准数据增强模块")
+
+from datasets import CityscapesDataModule, num_classes
 from models.unet import UNet
 from models.deeplabv3 import DeepLabV3
 from models.deeplabv3plus import DeepLabV3Plus
@@ -72,6 +67,9 @@ def main(args):
     # Set k-folds for cross validation
     k_folds = args.k_folds if args.k_folds > 0 else config['training']['k_folds']
     
+    # Get augmentation level (command line arg overrides config)
+    augmentation_level = args.augmentation_level if args.augmentation_level else config['data'].get('augmentation_level', 'standard')
+    
     # Setup data module
     data_module = CityscapesDataModule(
         data_dir=config['data']['root'],
@@ -79,7 +77,8 @@ def main(args):
         num_workers=args.num_workers,
         k_folds=k_folds,  # Used for cross-validation
         image_size=tuple(config['data']['image_size']),
-        augment=config['data']['augment']
+        augment=config['data']['augment'],
+        augmentation_level=augmentation_level
     )
     
     # Setup experiment
@@ -127,12 +126,14 @@ if __name__ == "__main__":
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
     parser.add_argument('--model', type=str, default='deeplabv3plus', choices=['unet', 'deeplabv3', 'deeplabv3plus'], help='Model to train')
     parser.add_argument('--device', type=str, default='auto', help='Device to use (e.g., cuda, cpu)')
-    parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers')
+    parser.add_argument('--num_workers', type=int, default=8, help='Number of data loading workers')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument('--epochs', type=int, default=0, help='Number of epochs to train (0 = use config value)')
     parser.add_argument('--k_folds', type=int, default=0, help='Number of folds for cross-validation (0 = use config value)')
     parser.add_argument('--resume', type=str, default='', help='Path to checkpoint to resume training from')
     parser.add_argument('--pretrained', type=str, default='', help='Path to pretrained model weights to use as initialization')
+    parser.add_argument('--augmentation_level', type=str, default=None, choices=['none', 'standard', 'advanced'], 
+                        help='Augmentation level to use (overrides config value)')
     
     args = parser.parse_args()
     main(args)

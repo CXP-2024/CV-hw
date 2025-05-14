@@ -82,7 +82,8 @@ class SimpleExperiment:
             batch_size=self.dataset_module.batch_size,
             shuffle=True,
             num_workers=self.dataset_module.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            collate_fn=lambda batch: self.dataset_module._collate_with_transform(batch, is_train=True)
         )
         
         val_loader = DataLoader(
@@ -90,7 +91,8 @@ class SimpleExperiment:
             batch_size=self.dataset_module.batch_size,
             shuffle=False,
             num_workers=self.dataset_module.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            collate_fn=lambda batch: self.dataset_module._collate_with_transform(batch, is_train=False)
         )
         
         return train_loader, val_loader

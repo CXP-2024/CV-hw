@@ -96,10 +96,10 @@ def evaluate_model(model, dataloader, device, num_classes, ignore_index=255):
     confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
     
     with torch.no_grad():
-        #i = 0 
+        i = 0 
         for inputs, targets in tqdm(dataloader, desc='Evaluating'):
             #if i > 5: break # for debugging, remove this line in production
-            #i += 1
+            i += 1
             inputs, targets = inputs.to(device), targets.to(device)
             
             # Forward pass

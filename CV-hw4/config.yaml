@@ -7,15 +7,16 @@ data:
   root: "data"
   image_size: [512, 1024] # height, width
   augment: true
+  augmentation_level: "standard" # 'none', 'standard', or 'advanced'
   ignore_index: 255
 training:
   epochs: 20
-  lr: 1e-4  # 降低学习率
-  weight_decay: 5e-4  # 增加权重衰减
-  batch_size: 8
+  lr: 5e-5  # 降低学习率
+  weight_decay: 1e-3  # 增加权重衰减
+  batch_size: 4
   k_folds: 5
   early_stopping_patience: 6  # 增加早停耐心值
-  lr_schedule: "warmrestart"  # 使用带热重启的余弦退火学习率调度
+  lr_schedule: "default"  # warmrestart, cosine, or default
   lr_warmrestart_T0: 5  # 第一次重启的周期
   lr_warmrestart_T_mult: 2  # 每次重启后周期乘数
   loss: "combined"  # 使用组合损失函数
