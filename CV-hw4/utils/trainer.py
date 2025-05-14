@@ -109,8 +109,8 @@ class Trainer:
             running_loss += loss.item()
             
             # Calculate confusion matrix for mIoU (only for a subset to save time)
-            if i % 10 == 0:  # Process every 10th batch for faster training
-                with torch.no_grad():
+            #if i % 10 == 0:  # Process every 10th batch for faster training
+            with torch.no_grad():
                     # Get predictions
                     preds = torch.argmax(outputs, dim=1)
                     

@@ -5,7 +5,7 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageEnhance
 import torchvision.transforms as transforms
 from torchvision.transforms import functional as TF
 from torch.utils.data import DataLoader, random_split, SubsetRandomSampler
@@ -86,22 +86,27 @@ class SynchronizedTransforms:
                 image = TF.adjust_contrast(image, contrast_factor)
                 image = TF.adjust_saturation(image, saturation_factor)
             
-            # Random rotation (small angles, -10 to 10 degrees, 30% probability)
+            # Random Gaussian blur (30% probability) - replacing rotation with blur
             if random.random() > 0.7:
-                angle = random.uniform(-10, 10)
-                image = TF.rotate(image, angle, interpolation=Image.BILINEAR, fill=0)
-                mask = TF.rotate(mask, angle, interpolation=Image.NEAREST, fill=self.ignore_index)
+                radius = random.uniform(0.1, 1.0)
+                image = image.filter(ImageFilter.GaussianBlur(radius=radius))
+                
+            # Random gamma adjustment (25% probability) - new augmentation type
+            if random.random() > 0.75:
+                gamma = random.uniform(0.7, 1.3)
+                image = TF.adjust_gamma(image, gamma)
             
-            # Random scaling (0.8 to 1.2, 50% probability)
+            # Random upscaling (1.0 to 1.2, 50% probability) - prevent black borders by only allowing upscaling
             if random.random() > 0.5:
-                scale_factor = random.uniform(0.8, 1.2)
+                scale_factor = random.uniform(1.0, 1.2)  # Only scale up to avoid black borders from padding
                 new_height = int(self.image_size[0] * scale_factor)
                 new_width = int(self.image_size[1] * scale_factor)
                 
                 image = TF.resize(image, (new_height, new_width), interpolation=Image.BILINEAR)
                 mask = TF.resize(mask, (new_height, new_width), interpolation=Image.NEAREST)
                 
-                # If scaled image is smaller than target size, we need to pad
+                # Fallback for edge cases: If scaled image is somehow smaller than target size, pad it
+                # This should not happen with upscaling-only approach (scale_factor ≥ 1.0)
                 if new_height < self.image_size[0] or new_width < self.image_size[1]:
                     # Calculate padding
                     padding_height = max(0, self.image_size[0] - new_height)
@@ -130,45 +135,22 @@ class SynchronizedTransforms:
         
         # Advanced augmentations
         if self.augmentation_level == 'advanced':
-            # Random vertical flipping (10% probability) - careful with this for street scenes
-            if random.random() > 0.9:
-                image = TF.vflip(image)
-                mask = TF.vflip(mask)
+            # Removed vertical flipping as it's equivalent to 180-degree rotation
+            # which would create unnatural street scene views
             
-            # Random perspective transformation (15% probability)
+            # Removed random perspective transformation as it can create black borders
+            # Replace with additional color jittering which doesn't introduce black areas
             if random.random() > 0.85:
-                try:
-                    # Get dimensions using the size property
-                    width, height = image.size
-                    
-                    # Define perspective parameters - using lists as required by TF.perspective
-                    startpoints = [
-                        [0, 0],  # top-left
-                        [width - 1, 0],  # top-right
-                        [width - 1, height - 1],  # bottom-right
-                        [0, height - 1],  # bottom-left
-                    ]
-                    
-                    # Perturb the corner points slightly (within 5% of image dimensions)
-                    width_offset = width * 0.05
-                    height_offset = height * 0.05
-                    
-                    # Generate endpoints with randomized offsets using uniform distribution for smoother results
-                    endpoints = [
-                        [startpoints[0][0] + random.uniform(-width_offset, width_offset),
-                         startpoints[0][1] + random.uniform(-height_offset, height_offset)],
-                        [startpoints[1][0] + random.uniform(-width_offset, width_offset),
-                         startpoints[1][1] + random.uniform(-height_offset, height_offset)],
-                        [startpoints[2][0] + random.uniform(-width_offset, width_offset),
-                         startpoints[2][1] + random.uniform(-height_offset, height_offset)],
-                        [startpoints[3][0] + random.uniform(-width_offset, width_offset),
-                         startpoints[3][1] + random.uniform(-height_offset, height_offset)],
-                    ]
-                    
-                    image = TF.perspective(image, startpoints, endpoints, fill=0)
-                    mask = TF.perspective(mask, startpoints, endpoints, fill=self.ignore_index, interpolation=Image.NEAREST)
-                except Exception as e:
-                    logger.warning(f"透视变换失败，跳过: {e}")
+                # Apply more aggressive color jittering instead
+                brightness_factor = random.uniform(0.7, 1.3)
+                contrast_factor = random.uniform(0.7, 1.3)
+                saturation_factor = random.uniform(0.7, 1.3)
+                hue_factor = random.uniform(-0.1, 0.1)
+                
+                image = TF.adjust_brightness(image, brightness_factor)
+                image = TF.adjust_contrast(image, contrast_factor)
+                image = TF.adjust_saturation(image, saturation_factor)
+                image = TF.adjust_hue(image, hue_factor)
             
             # Random color channel swapping (10% probability)
             if random.random() > 0.9:
@@ -183,35 +165,49 @@ class SynchronizedTransforms:
             if random.random() > 0.9:
                 image = TF.rgb_to_grayscale(image, num_output_channels=3)
             
-            # Random Gaussian blur (20% probability)
-            if random.random() > 0.8:
+            # Random Gaussian blur (15% probability, reduced from 20%)
+            if random.random() > 0.85:
                 # Use a smaller kernel for smaller images
                 kernel_size = int(min(self.image_size) * 0.03) | 1  # Make sure it's odd
                 kernel_size = max(3, kernel_size)  # At least size 3
                 image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.1, 1.0)))
-            
-            # Random cutout/erase (10% probability)
+                
+            # Random sharpening (10% probability) - new augmentation type
             if random.random() > 0.9:
-                # Create a cutout with random size (up to 20% of image)
-                width, height = image.size
-                cutout_size_x = int(width * random.uniform(0.05, 0.2))
-                cutout_size_y = int(height * random.uniform(0.05, 0.2))
+                # Apply sharpening filter
+                enhancer = ImageEnhance.Sharpness(image)
+                factor = random.uniform(1.0, 2.0)  # 1.0 is original image, 2.0 is much sharper
+                image = enhancer.enhance(factor)
                 
-                # Random position
-                x = random.randint(0, width - cutout_size_x - 1)
-                y = random.randint(0, height - cutout_size_y - 1)
+            # Random color balance adjustment (10% probability) - new augmentation type
+            if random.random() > 0.9:
+                # Adjust color balance by modifying individual RGB channels
+                r, g, b = image.split()
                 
-                # Apply cutout (black rectangle) to image
-                img_array = np.array(image)
-                img_array[y:y+cutout_size_y, x:x+cutout_size_x, :] = 0
-                image = Image.fromarray(img_array)
+                # Create channel enhancers
+                r_enhancer = ImageEnhance.Brightness(r)
+                g_enhancer = ImageEnhance.Brightness(g)
+                b_enhancer = ImageEnhance.Brightness(b)
                 
-                # For mask, fill with ignore_index
-                mask_array = np.array(mask)
-                mask_array[y:y+cutout_size_y, x:x+cutout_size_x] = self.ignore_index
-                mask = Image.fromarray(mask_array.astype(np.uint8))
+                # Apply different factors to each channel to simulate color temperature changes
+                r = r_enhancer.enhance(random.uniform(0.8, 1.2))
+                g = g_enhancer.enhance(random.uniform(0.8, 1.2))
+                b = b_enhancer.enhance(random.uniform(0.8, 1.2))
+                
+                # Merge channels back
+                image = Image.merge("RGB", (r, g, b))
             
-            # Random elastic transformation (10% probability)
+            # Removed random cutout/erase as it adds black rectangles
+            # Replace with noise addition which doesn't introduce black areas
+            if random.random() > 0.9:
+                # Add some random noise to simulate camera sensor noise
+                img_array = np.array(image, dtype=np.float32)
+                # Add Gaussian noise with small standard deviation
+                noise = np.random.normal(0, 5, img_array.shape)
+                img_array = np.clip(img_array + noise, 0, 255).astype(np.uint8)
+                image = Image.fromarray(img_array)
+            
+            # Modified elastic transformation to use reflection border mode to avoid black areas
             if random.random() > 0.9:
                 try:
                     # Create random displacement fields
@@ -220,8 +216,9 @@ class SynchronizedTransforms:
                     
                     # Create random displacement with gaussian filter
                     # The strength of the displacement is controlled by the sigma and alpha parameters
-                    sigma = random.uniform(5, 10)
-                    alpha = random.uniform(30, 60)
+                    # Use smaller values to minimize the chance of creating black borders
+                    sigma = random.uniform(3, 7)
+                    alpha = random.uniform(10, 30)  # Reduced strength
                     
                     # Create random displacement fields
                     dx = np.random.rand(height, width) * 2 - 1
@@ -239,9 +236,13 @@ class SynchronizedTransforms:
                     img_np = np.array(image)
                     mask_np = np.array(mask)
                     
-                    # Apply transformation
-                    img_distorted = cv2.remap(img_np, x_map, y_map, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-                    mask_distorted = cv2.remap(mask_np, x_map, y_map, interpolation=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
+                    # Apply transformation with REFLECT border mode to avoid black pixels
+                    img_distorted = cv2.remap(img_np, x_map, y_map, 
+                                              interpolation=cv2.INTER_LINEAR, 
+                                              borderMode=cv2.BORDER_REFLECT)
+                    mask_distorted = cv2.remap(mask_np, x_map, y_map, 
+                                               interpolation=cv2.INTER_NEAREST, 
+                                               borderMode=cv2.BORDER_REFLECT)
                     
                     # Convert back to PIL images
                     image = Image.fromarray(img_distorted)
@@ -249,32 +250,27 @@ class SynchronizedTransforms:
                 except Exception as e:
                     logger.warning(f"弹性变换失败，跳过: {e}")
             
-            # Image mixup (5% probability)
+            # Image color mixup (5% probability) - only color transformations, no geometric transforms
             if random.random() > 0.95:
                 # We'll simulate a simple mixup by blending the original image with a 
-                # random scaling/rotation/brightness variation of itself
+                # color-transformed version of itself (no geometric changes to avoid confusing scenes)
                 # Create a transformed version of the current image
                 mixed_image = image.copy()
                 
-                # Apply some transformations to this copy
-                if random.random() > 0.5:
-                    mixed_image = TF.hflip(mixed_image)
-                
-                # Random brightness and contrast
+                # Only apply color transformations (no horizontal flip to avoid confusing scenes)
+                # Random color transformations (don't create black borders or confusing scenes)
                 brightness_factor = random.uniform(0.7, 1.3)
                 contrast_factor = random.uniform(0.7, 1.3)
                 saturation_factor = random.uniform(0.7, 1.3)
+                hue_factor = random.uniform(-0.1, 0.1)
                 
                 mixed_image = TF.adjust_brightness(mixed_image, brightness_factor)
                 mixed_image = TF.adjust_contrast(mixed_image, contrast_factor)
                 mixed_image = TF.adjust_saturation(mixed_image, saturation_factor)
+                mixed_image = TF.adjust_hue(mixed_image, hue_factor)
                 
-                # Apply a random rotation
-                angle = random.uniform(-15, 15)
-                mixed_image = TF.rotate(mixed_image, angle, interpolation=Image.BILINEAR, fill=0)
-                
-                # Blend the original and transformed image
-                alpha = random.uniform(0.4, 0.6)
+                # Use a lower alpha value to make the effect more subtle
+                alpha = random.uniform(0.6, 0.8)  # Original image dominates more
                 img_np = np.array(image).astype(float) * alpha
                 mixed_np = np.array(mixed_image).astype(float) * (1 - alpha)
                 blended = np.clip(img_np + mixed_np, 0, 255).astype(np.uint8)

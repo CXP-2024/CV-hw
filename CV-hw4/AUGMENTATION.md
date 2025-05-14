@@ -19,24 +19,25 @@ The augmentation framework supports three different levels:
 The standard level includes:
 
 - **Random Horizontal Flipping** (50% probability)
-- **Random Rotation** (small angles, -10 to 10 degrees, 30% probability)
-- **Random Scaling** (0.8 to 1.2, 50% probability)
+- **Random Gaussian Blur** (30% probability) - Replaced rotation with blur for better edge preservation
+- **Random Gamma Adjustment** (25% probability) - Adjusts image gamma to improve exposure variation
+- **Random Upscaling** (1.0 to 1.2, 50% probability) - Only allows scaling up to prevent black borders
 - **Random Cropping** (40% probability)
 - **Color Jittering** (brightness, contrast, saturation adjustments, 50% probability)
-- **Random Gaussian Blur** (15% probability)
 
 ## Advanced Augmentation Techniques
 
 The advanced level includes all standard augmentations plus:
 
-- **Random Vertical Flipping** (10% probability) - Flips the image vertically, which creates uncommon viewpoints
-- **Random Perspective Transformation** (15% probability) - Alters the perspective of the image by perturbing the corner points
 - **Random Color Channel Swapping** (10% probability) - Randomly shuffles the RGB channels to create unusual color effects
 - **Random Grayscale Conversion** (10% probability) - Converts the image to grayscale to improve robustness to color variations
-- **Random Gaussian Blur** (20% probability) - Applies a Gaussian blur to simulate focus issues
-- **Random Cutout/Erase** (10% probability) - Erases random rectangular regions to simulate occlusions
-- **Random Elastic Transformation** (10% probability) - Applies local deformations to simulate warping or motion
-- **Image Mixup** (5% probability) - Blends the image with a transformed version of itself to create mixed examples
+- **Random Gaussian Blur** (15% probability) - Applies a Gaussian blur to simulate focus issues
+- **Random Sharpening** (10% probability) - Enhances edges and details in the image
+- **Random Color Balance** (10% probability) - Adjusts individual RGB channels for color temperature variation
+- **Enhanced Color Jittering** (15% probability) - More aggressive brightness, contrast, saturation, and hue adjustments
+- **Random Noise Addition** (10% probability) - Adds Gaussian noise to simulate camera sensor variations
+- **Modified Elastic Transformation** (10% probability) - Applies gentle local deformations using reflection border mode to avoid black areas
+- **Color-based Image Mixup** (5% probability) - Blends the image with a color-transformed version of itself (no geometric transforms or horizontal flips)
 
 ## Usage
 
@@ -346,16 +347,17 @@ The system's design enables easy experimentation with different augmentation str
 
 The augmentation techniques are implemented with careful error handling to ensure robustness:
 
-1. **Perspective Transformation**
-   Applies controlled perspective distortion with:
-   - Corner point perturbation (within 5% of image dimensions)
-   - Error handling with try/except blocks
-   - Proper padding for segmentation masks
+1. **Enhanced Color Transformations**
+   Replaced geometric transforms that create black borders with enhanced color adjustments:
+   - Brightness, contrast, saturation, and hue adjustments
+   - Color channel balance modifications
+   - RGB channel swapping and grayscale conversion
 
-2. **Elastic Transformation**
-   Applies non-linear warping with:
-   - Displacement fields generated with Gaussian filtering
-   - OpenCV's remap function for accurate interpolation
+2. **Modified Elastic Transformation**
+   Uses safer elastic deformation techniques:
+   - Reduced displacement strength to minimize distortion
+   - Border reflection mode instead of constant black padding
+   - OpenCV's remap function with BORDER_REFLECT option
    - Error recovery to skip problematic transformations
 
 3. **Mixed Augmentations**
@@ -363,3 +365,25 @@ The augmentation techniques are implemented with careful error handling to ensur
    - Data variation
    - Semantic integrity
    - Training stability
+
+4. **Upscaling-only Approach**
+   The scaling augmentation is designed to prevent black borders by:
+   - Only allowing scale factors ≥ 1.0 (upscaling only)
+   - Cropping oversized regions after scaling
+   - Maintaining aspect ratio during transformations
+   - Preserving pixel-perfect segmentation masks
+
+5. **Black Area Prevention Strategy**
+   All transformations are carefully designed to avoid black areas:
+   - Removed vertical flipping (equivalent to 180-degree rotation)
+   - Removed traditional perspective transformations
+   - Replaced cutout/erase with noise addition
+   - Used reflection border mode for elastic transformations
+   - Eliminated any geometric transforms that create artificial black borders
+   
+6. **Preventing Confusing Scenes**
+   Special attention is paid to preventing confusing augmentations:
+   - Removed horizontal flipping from image mixup to avoid doubled/mirrored objects
+   - Applied more subtle blending in mixup (higher alpha for original image)
+   - Focused on color-space augmentations that maintain scene coherence
+   - Avoided transformations that create implausible or disorienting scenes
