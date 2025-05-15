@@ -9,7 +9,7 @@
 \usepackage{float} % For better figure placement control
 
 \title{\textbf{Computer Vision homework 4}}
-\author{Pan Changxun}
+\author{Pan Changxun 2024011323}
 \date{May 2025}
 
 \topmargin=-0.45in      %
@@ -31,6 +31,11 @@
 \begin{document}
 \maketitle
 
+\section{Introduction}
+This report documents the implementation of the DeepLabV3+ model for semantic segmentation on the Cityscapes dataset. The goal is to achieve high accuracy in segmenting urban scenes into 19 different classes, such as road, car, pedestrian, etc. The report covers the dataset preparation, model architecture, training strategy, and evaluation metrics.
+
+The codes for this project are available in the GitHub repository: \url{https://github.com/CXP-2024/CV-hw/tree/main/CV-hw4}.
+A detailed description can be obtained from the README file in the repository. Also, I achieved a 3-level augmentation for the dataset, which is also described in the AUGMENTATION.md file in the repository.
 \section{Models}
 I first tried to use the UNet model, but it did not perform well for this segmentation task. I then implemented the DeepLabV3 model and further improved it to DeepLabV3+. The DeepLabV3+ architecture consists of the following key components:
 
@@ -126,11 +131,64 @@ To address the overfitting issue, I implemented a 5-fold cross-validation approa
 The training schedule was designed as follows:
 \begin{itemize}
     \item First 30 epochs: learning rate = $1 \times 10^{-4}$
-    \item Epochs 30-50: initial learning rate = $5 \times 10^{-5}$
+    \item Epochs 30-90: initial learning rate = $5 \times 10^{-5}$
 \end{itemize}
 
 For learning rate adjustment, I used the Plateau scheduling method, which reduces the learning rate by a factor of 0.5 if the mIoU does not improve over 5 consecutive epochs.
 
+\subsection{Loss Function Design}
+
+For loss calculation, I implemented a comprehensive loss function strategy to address the challenges of semantic segmentation. Initially, I used standard cross-entropy loss during the first training phase. For later training stages, I developed a more sophisticated combined loss approach found in \texttt{utils/losses.py}.
+
+My loss function implementation consists of three main components:
+
+\subsubsection{Label Smoothing Cross Entropy Loss}
+To reduce overfitting and improve model generalization, I implemented label smoothing for the cross-entropy loss. Rather than using hard targets (1 for correct class, 0 for others), label smoothing assigns a value slightly less than 1 to the correct class and small non-zero values to other classes:
+
+\begin{itemize}
+    \item For the correct class: target = $1 - \text{smoothing}$
+    \item For other classes: target = $\text{smoothing} / \text{num\_classes}$
+\end{itemize}
+
+This technique helps prevent the model from becoming overconfident and improves its ability to generalize. I used a smoothing factor of 0.1, which provided a good balance between confidence and generalization.
+
+\subsubsection{Dice Loss}
+To directly optimize for the intersection over union metric, I implemented Dice loss, which is particularly effective for segmentation tasks with class imbalance. The Dice coefficient measures the overlap between predicted and ground truth segmentations:
+
+\begin{equation}
+\text{Dice} = \frac{2 \times \text{intersection} + \text{smooth}}{\text{union} + \text{smooth}}
+\end{equation}
+
+Where:
+\begin{itemize}
+    \item intersection = sum of element-wise multiplication of predictions and targets
+    \item union = sum of predictions + sum of targets
+    \item smooth = a small constant (1.0) to prevent division by zero
+\end{itemize}
+
+The Dice loss is calculated as $1 - \text{Dice}$, so minimizing this loss maximizes the Dice coefficient.
+
+\subsubsection{Combined Loss Function}
+To leverage the benefits of both approaches, I created a combined loss function that is a weighted sum of label smoothing cross-entropy and Dice loss:
+
+\begin{equation}
+\text{Loss} = \alpha \times \text{CrossEntropyLoss} + (1-\alpha) \times \text{DiceLoss}
+\end{equation}
+
+Where $\alpha = 0.6$ gives equal weight to both loss components.
+
+This combined approach addresses multiple challenges:
+\begin{itemize}
+    \item Cross-entropy provides stable gradients and good convergence properties
+    \item Label smoothing prevents overconfidence and improves generalization
+    \item Dice loss directly optimizes for overlap metrics (similar to IoU)
+    \item The combination helps balance between pixel-wise accuracy and region-based segmentation quality
+\end{itemize}
+
+Additionally, all loss functions properly handle ignored pixels (labeled with 255) and support class weights to address class imbalance issues.
+
+
+\subsection{Model Aggregation}
 After training all folds, I evaluated three model aggregation approaches:
 \begin{enumerate}
     \item The best mIoU model from all folds
@@ -147,15 +205,18 @@ During the second training phase (epochs 30-50), I observed a slight decrease in
 
 
 \subsection{Training Results for Epochs 50-70}
-Encouragingly, performance improved during the third training phase (epochs 50-70), with the best model achieving an mIoU of 56\%. This improvement suggests that the learning rate adjustment strategy and continued training were effective in refining the model parameters. The results of this training phase are presented in Figures~\ref{fig:cross_val_50_70_combined} and \ref{fig:cross_val_50_70_val}, showing the detailed performance metrics across different folds.
+Encouragingly, after I apply data augmentation techniques, performance improved during the third training phase (epochs 50-70), with the best model achieving an mIoU of 56\%. This improvement suggests that the learning rate adjustment strategy and continued training were effective in refining the model parameters. The results of this training phase are presented in Figures~\ref{fig:cross_val_50_70_combined} and \ref{fig:cross_val_50_70_val}, showing the detailed performance metrics across different folds.
 
 
 
 \subsection{Final Optimization and Results}
-For final optimization, I implemented a cosine learning rate scheduler, which further improved performance. With this approach, the best model achieved an mIoU of approximately 58\%, although there was considerable variance across folds. Given the performance plateau and the significant variance, I decided to conclude the training at this point.
+For final optimization (70-90 epochs), I implemented a cosine learning rate scheduler and fine-tuned the combined loss function with adjusted weights. The combined loss with equal weighting between label smoothed cross-entropy and Dice loss (0.5:0.5) proved most effective during this phase. With this approach, the best model achieved an mIoU of approximately 58\%, although there was considerable variance across folds. Given the performance plateau and the significant variance, I decided to conclude the training at this point. (I also tried to use the warmup learning rate strategy, but it did not yield better results. I find when the learning rate is reset after the period, the optimization process is not as effective as the cosine learning rate strategy.(not stable))
 
-The final test results are presented in Figures~\ref{fig:per_class_iou}, \ref{fig:confusion_matrix}, and \ref{fig:class_weight_vs_iou}, with detailed visualizations available in the directory \texttt{outputs/deeplabv3plus\_test\_results}. Figure~\ref{fig:per_class_iou} shows the per-class IoU scores, Figure~\ref{fig:confusion_matrix} presents the confusion matrix for segmentation results, and Figure~\ref{fig:class_weight_vs_iou} illustrates the relationship between class weights and IoU scores.
+The final test results are presented in Figures~\ref{fig:per_class_iou}, \ref{fig:confusion_matrix}, and \ref{fig:class_weight_vs_iou}, with detailed visualizations available in the directory \texttt{outputs/deeplabv3plus\_test\_results}. Figure~\ref{fig:per_class_iou} shows the per-class IoU scores, Figure~\ref{fig:confusion_matrix} presents the confusion matrix for segmentation results, and Figure~\ref{fig:class_weight_vs_iou} illustrates the relationship between class weights and IoU scores. Figure~\ref{fig:3model_comparison} compares the performance of the three model aggregation approaches.
 
+
+\section{Acknowledgements}
+I would like to acknowledge the authors of the DeepLabV3+ architecture, whose work provided the foundation for this implementation. I also utilized GitHub Copilot as a programming assistant to help streamline code development and debugging.
 \section{Figures}
 
 \begin{figure}[htbp]
@@ -212,6 +273,13 @@ The final test results are presented in Figures~\ref{fig:per_class_iou}, \ref{fi
 
 \begin{figure}[htbp]
     \centering
+    \includegraphics[width=0.8\textwidth]{3model_comparison_30_50.png}
+    \caption{Comparison of the three model aggregation approaches for epochs 30-50, highlighting their performance differences}
+    \label{fig:3model_comparison_30_50}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
     \includegraphics[width=0.8\textwidth]{folds_30_50.png}
     \caption{mIoU comparison across all folds on the official validation set, epochs 30-50}
     \label{fig:cross_val_30_50_val}
@@ -243,6 +311,20 @@ The final test results are presented in Figures~\ref{fig:per_class_iou}, \ref{fi
     \label{fig:cross_val_50_70_val}
 \end{figure}
 
+%folds 70_90.png
+\begin{figure}[htbp]
+		\centering
+		\includegraphics[width=0.8\textwidth]{folds_70_90.png}
+		\caption{mIoU comparison across all folds on the official validation set, epochs 70-90}
+		\label{fig:cross_val_70_90_val}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{3model_comparison_70_90.png}
+    \caption{Comparison of the three model aggregation approaches for epochs 70-90, highlighting their performance differences}
+    \label{fig:3model_comparison}
+\end{figure}
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.8\textwidth]{outputs/deeplabv3plus_test_results/per_class_iou.png}
@@ -264,7 +346,6 @@ The final test results are presented in Figures~\ref{fig:per_class_iou}, \ref{fi
     \label{fig:class_weight_vs_iou}
 \end{figure}
 
-\section{Acknowledgements}
-I would like to acknowledge the authors of the DeepLabV3+ architecture, whose work provided the foundation for this implementation. I also utilized GitHub Copilot as a programming assistant to help streamline code development and debugging. 
+
 
 \end{document}

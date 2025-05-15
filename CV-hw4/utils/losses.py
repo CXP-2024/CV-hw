@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Thanks copilot for the codes
 class LabelSmoothCrossEntropyLoss(nn.Module):
     """
     标签平滑交叉熵损失

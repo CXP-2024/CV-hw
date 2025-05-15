@@ -22,12 +22,9 @@ CV-hw4/
 ├── data/                  # Cityscapes dataset directory
 │   ├── gtFine/            # Ground truth annotations
 │   └── leftImg8bit/       # Input images
-├── cityscapesScripts/     # Official Cityscapes scripts (evaluation, helpers)
 ├── config.yaml            # Configuration file
 ├── train.py               # Main training script
 ├── train_simple.py        # Simplified training script
-├── run_pipeline.py        # Full training pipeline
-├── ablation.py            # Ablation studies
 ├── test_*.py              # Various test scripts
 ├── requirements.txt       # Project dependencies
 └── AUGMENTATION.md        # Detailed augmentation documentation
@@ -62,8 +59,8 @@ The dataset is split into train, validation, and test sets.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/your-username/CV-hw4.git
-cd CV-hw4
+git clone https://github.com/CXP-2024/CV-hw.git
+cd CV-hw/CV-hw4
 ```
 
 2. Install dependencies:
@@ -82,20 +79,31 @@ Edit `config.yaml` to configure your experiment:
 ```yaml
 device: "cuda"
 model:
-  type: "deeplabv3plus"  # unet, deeplabv3, or deeplabv3plus
+  type: "deeplabv3plus" # unet or deeplabv3
   n_classes: 19
   backbone: "resnet"
 data:
   root: "data"
-  image_size: [512, 1024]  # height, width
+  image_size: [512, 1024] # height, width
   augment: true
-  augmentation_level: "standard"  # none, standard, or advanced
+  augmentation_level: "standard" # 'none', 'standard', or 'advanced'
+  ignore_index: 255
 training:
   epochs: 20
-  lr: 5e-5
-  weight_decay: 1e-3
+  lr: 5e-5  # 降低学习率
+  weight_decay: 1e-3  # 增加权重衰减
   batch_size: 4
   k_folds: 5
+  early_stopping_patience: 6  # 增加早停耐心值
+  lr_schedule: "default"  # warmrestart, cosine, or default
+  lr_warmrestart_T0: 5  # 第一次重启的周期
+  lr_warmrestart_T_mult: 2  # 每次重启后周期乘数
+  loss: "combined"  # 使用组合损失函数
+output:
+  base_dir: "outputs"
+  save_checkpoints: true
+  save_best_only: false
+
 ```
 
 ### Training
