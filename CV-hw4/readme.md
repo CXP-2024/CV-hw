@@ -140,7 +140,7 @@ Training results, model checkpoints, and visualizations are saved in the `output
 - `figures/`: Visualizations including training curves, sample predictions, and confusion matrices
 - `config.json`: Configuration used for the experiment
 
-## Testing
+## Testing and Visualization
 
 To test a trained model:
 

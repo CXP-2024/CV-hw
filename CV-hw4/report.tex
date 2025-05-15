@@ -36,7 +36,7 @@ This report documents the implementation of the DeepLabV3+ model for semantic se
 
 The codes for this project are available in the GitHub repository: \url{https://github.com/CXP-2024/CV-hw/tree/main/CV-hw4}.
 A detailed description can be obtained from the README file in the repository. Also, I achieved a 3-level augmentation for the dataset, which is also described in the AUGMENTATION.md file in the repository.
-\section{Models}
+\section{Models and Experiments}
 I first tried to use the UNet model, but it did not perform well for this segmentation task. I then implemented the DeepLabV3 model and further improved it to DeepLabV3+. The DeepLabV3+ architecture consists of the following key components:
 
 \begin{itemize}
@@ -121,20 +121,25 @@ The skip connection between the encoder and decoder is crucial for recovering sp
 
 The low-level features undergo a 1×1 convolution to reduce the channel dimension from 64 to 48, making the fusion more balanced and computationally efficient.
 
-\section{Experiments}
-\subsection{Initial Training without Cross-Validation}
-I initially conducted experiments without cross-validation to establish a baseline. However, I observed that the model quickly began to overfit, with the loss no longer decreasing after a certain point. Despite this limitation, the model achieved a mean Intersection over Union (mIoU) of approximately 51\%. The training curve is shown in Figure~\ref{fig:no_cross_val_10_30}.
+\subsection{Model Input and Evaluation Resolution}
+To balance performance and computational efficiency, all training and evaluation were conducted at a consistent resolution of 512×1024 pixels. The original Cityscapes images (1024×2048) were resized to this working resolution during both training and testing phases.
 
-\subsection{Cross-Validation Training Strategy}
-To address the overfitting issue, I implemented a 5-fold cross-validation approach by splitting the training set. This significantly improved performance, with the mIoU reaching approximately 58\% by the end of training.
+This resolution choice was explicitly defined in the \texttt{config.yaml} file:
+\begin{verbatim}
+data:
+  image_size: [512, 1024]  # height, width
+\end{verbatim}
 
-The training schedule was designed as follows:
-\begin{itemize}
-    \item First 30 epochs: learning rate = $1 \times 10^{-4}$
-    \item Epochs 30-90: initial learning rate = $5 \times 10^{-5}$
-\end{itemize}
+Both input images and ground truth labels were resized to this resolution. During inference, the model predictions remain at 512×1024 resolution rather than being upscaled back to the original 1024×2048 resolution. This approach ensures consistency between training and evaluation conditions, while significantly reducing memory requirements and computational load.
 
-For learning rate adjustment, I used the Plateau scheduling method, which reduces the learning rate by a factor of 0.5 if the mIoU does not improve over 5 consecutive epochs.
+The model architecture was designed to handle this specific resolution, with the encoder progressively reducing spatial dimensions and the decoder carefully upsampling features back to the input dimensions. The final interpolation layer in the DeepLabV3+ model upsamples the features to match the input resolution of 512×1024:
+
+\begin{verbatim}
+# Upscale to input resolution
+x = F.interpolate(x, size=input_shape, mode='bilinear', align_corners=False)
+\end{verbatim}
+
+This consistent handling of resolution across both training and evaluation phases ensures fair comparisons and reliable performance metrics.
 
 \subsection{Loss Function Design}
 
