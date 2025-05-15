@@ -295,9 +295,9 @@ class Trainer:
             if val_weighted_miou > best_val_weighted_miou:
                 best_val_weighted_miou = val_weighted_miou
                 improved = True
-                # 保存最佳加权mIoU模型
-                torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_weighted_iou_model.pth'))
-                self.logger.info(f"新的最佳加权IoU模型已保存: {best_val_weighted_miou:.4f} (第 {epoch} 轮)")
+                # do not save 最佳加权mIoU模型
+                # torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_weighted_iou_model.pth'))
+                # self.logger.info(f"新的最佳加权IoU模型已保存: {best_val_weighted_miou:.4f} (第 {epoch} 轮)")
             
             if improved:
                 patience_counter = 0

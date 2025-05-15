@@ -194,7 +194,7 @@ class CrossValidationExperiment:
             
             if lr_schedule == 'cosine':
                 scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer, T_max=num_epochs, eta_min=lr * 0.01
+                    optimizer, T_max=num_epochs, eta_min=lr * 0.05
                 )
                 self.logger.info(f"Using Cosine Annealing LR scheduler, initial LR: {lr}, min LR: {lr * 0.01}")
             elif lr_schedule == 'warmrestart':
