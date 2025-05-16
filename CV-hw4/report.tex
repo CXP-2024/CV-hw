@@ -32,11 +32,50 @@
 \maketitle
 
 \section{Introduction}
-This report documents the implementation of the DeepLabV3+ model for semantic segmentation on the Cityscapes dataset. The goal is to achieve high accuracy in segmenting urban scenes into 19 different classes, such as road, car, pedestrian, etc. The report covers the dataset preparation, model architecture, training strategy, and evaluation metrics.
+This report documents the implementation of the DeepLabV3+ model for semantic segmentation on the Cityscapes dataset. The goal is to achieve high accuracy in segmenting urban scenes into 19 different classes, such as road, car, pedestrian, etc. The report covers the model architecture, training strategy, and evaluation metrics.
 
 The codes for this project are available in the GitHub repository: \url{https://github.com/CXP-2024/CV-hw/tree/main/CV-hw4}.
-A detailed description can be obtained from the README file in the repository. Also, I achieved a 3-level augmentation for the dataset, which is also described in the AUGMENTATION.md file in the repository.
-\section{Models and Experiments}
+A detailed description can be obtained from the README file in the repository. 
+
+I build my own version of the deeplabv3plus model base on the original implementation, which is also described in the MODEL.md file in the repository or see it in \ref{sec:Models}. For detailed evaluation, see the EVALUATION.md file in the repository. A brief summary is provided in \ref{sec:Evaluation}.
+
+Some tricks I used in the training process include:
+\begin{itemize}
+		\item Implemented a 5-fold cross-validation strategy to improve model robustness and reduce overfitting.
+		\item Employed a combination of label smoothing cross-entropy loss and Dice loss to enhance segmentation performance. See \ref{sec:Loss_Function} for details.
+		\item Utilized data augmentation techniques to increase the diversity of training samples and improve generalization. See \ref{sec:Data_Augmentation} for brief details and the EVALUATION.md file for more details.
+		\item Implemented a cosine learning rate scheduler for better convergence during training. 
+		\item Experimented with different model aggregation strategies to optimize final performance. See \ref{sec:Model_Aggregation} for details.
+\end{itemize}
+
+Finally, I use the DeepLabV3+ model to achieve a mean Intersection over Union (mIoU) of 61.9\% (Figure~\ref{fig:train_metrics_10_149}, \ref{fig:per_class_iou}) on the official validation set. All the figures see in \ref{sec:Figures}.
+
+
+\section{Experiments and Results}\label{sec:Experiments}
+\subsection{Initial Training without Cross-Validation}
+I initially conducted experiments without cross-validation to establish a baseline. However, I observed that the model quickly began to overfit, with the loss no longer decreasing after a certain point. Despite this limitation, the model achieved a mean Intersection over Union (mIoU) of approximately 51\%. The training curve is shown in Figure~\ref{fig:no_cross_val_10_30}.
+
+To address the overfitting issue, I implemented a 5-fold cross-validation approach by \textbf{splitting the official training set into five subsets}. The combined loss with weighting between label smoothed cross-entropy and Dice loss (0.6:0.4) proved most effective during this phase. This significantly improved performance, with the mIoU reaching approximately 54\% by the end of training. Figure~\ref{fig:cross_val_10_30_val} compares mIoU across all folds on the official validation set.
+
+\subsection{Training Results for Epochs 30-50}
+During the second training phase (epochs 30-50), I observed a slight decrease in overall performance. However, the averaged model still maintained a respectable mIoU of 54\%, indicating the robustness of the model averaging approach but seemingly no improvement. The model aggregation show in Figure~\ref{fig:3model_comparison_30_50} highlights the performance differences between the three aggregation strategies. The best performing model from this phase was then used as the pre-trained model for the next training iteration.
+
+
+\subsection{Training Results for Epochs 50-70}
+Encouragingly, after I apply data augmentation techniques (The level I choose "standard" first), performance improved during the third training phase (epochs 50-70), with the best model achieving an mIoU of 56\%. This improvement suggests that the learning rate adjustment strategy and continued training were effective in refining the model parameters. The results of this training phase are presented in Figures~\ref{fig:cross_val_50_70_val}, showing the detailed performance metrics across different folds.
+
+\subsection{Training Results for Epochs 70-150}
+For the later training phase, I choose "advanced" data augmentation, which includes more aggressive transformations. And start to use the cosine learning rate strategy. 
+
+
+
+\subsection{Final Optimization and Results}\label{sec:Final_Optimization}
+Given the performance plateau and the significant variance, I decided to conclude the training at this point. (I also tried to use the warmup learning rate strategy, but it did not yield better results. I find when the learning rate is reset after the period, the optimization process is not as effective as the cosine learning rate strategy.(not stable))
+
+The final test results are presented in Figures~\ref{fig:per_class_iou}, \ref{fig:confusion_matrix}, and \ref{fig:class_weight_vs_iou}, with detailed visualizations available in the directory \texttt{outputs/deeplabv3plus\_test\_results}. Figure~\ref{fig:per_class_iou} shows the per-class IoU scores, Figure~\ref{fig:confusion_matrix} presents the confusion matrix for segmentation results, and Figure~\ref{fig:class_weight_vs_iou} illustrates the relationship between class weights and IoU scores. Figure~\ref{fig:3model_comparison} compares the performance of the three model aggregation approaches.
+
+
+\section{Models}\label{sec:Models}
 I first tried to use the UNet model, but it did not perform well for this segmentation task. I then implemented the DeepLabV3 model and further improved it to DeepLabV3+. The DeepLabV3+ architecture consists of the following key components:
 
 \begin{itemize}
@@ -88,38 +127,7 @@ A simple 1×1 convolution transforms the decoder output into class logits with 1
 \subsubsection{Weight Initialization}
 All convolutional layers use Kaiming initialization to ensure proper gradient flow during training, while batch normalization layers are initialized with weight=1 and bias=0.
 
-\subsection{Model Implementation Details}
 
-\subsubsection{Forward Pass Process}
-The forward pass through the model is implemented as follows:
-\begin{enumerate}
-    \item Input image is processed by the ResNet backbone
-    \item Encoder produces high-level features (output of layer 4) and low-level features (output of layer 1)
-    \item High-level features are passed through the ASPP module for multi-scale context extraction
-    \item ASPP features and low-level features are combined in the decoder module
-    \item Final classifier converts the feature map to logits
-    \item Output is upsampled to input resolution using bilinear interpolation
-\end{enumerate}
-
-\subsubsection{Key Implementation Components}
-
-\paragraph{Atrous (Dilated) Convolutions}
-I used dilated convolutions to increase the receptive field without increasing the number of parameters or reducing the spatial resolution. In standard convolutions, the filter elements are applied to adjacent input elements. In dilated convolutions, gaps ("holes") are introduced between filter elements, effectively increasing the receptive field while maintaining the same number of parameters.
-
-For example, with a dilation rate of 2, each filter element applies to inputs that are 2 pixels apart, effectively doubling the receptive field without increasing the filter size. This is crucial for semantic segmentation where both global context and fine details need to be preserved.
-
-\paragraph{ASPP Design Considerations}
-The ASPP module captures multi-scale information through parallel atrous convolutions with different dilation rates (12, 24, and 36). These different rates allow the network to capture context at various scales:
-\begin{itemize}
-    \item Smaller dilation rates: capture fine details and local context
-    \item Larger dilation rates: capture broader context and object relationships
-    \item Global average pooling branch: captures image-level context
-\end{itemize}
-
-\paragraph{Skip Connection Implementation}
-The skip connection between the encoder and decoder is crucial for recovering spatial details lost during downsampling. By connecting the low-level features from the first ResNet block to the decoder, the model can combine semantic information (from deep layers) with spatial information (from shallow layers), resulting in more accurate boundary delineation.
-
-The low-level features undergo a 1×1 convolution to reduce the channel dimension from 64 to 48, making the fusion more balanced and computationally efficient.
 
 \subsection{Model Input and Evaluation Resolution}
 To balance performance and computational efficiency, all training and evaluation were conducted at a consistent resolution of 512×1024 pixels. The original Cityscapes images (1024×2048) were resized to this working resolution during both training and testing phases.
@@ -141,13 +149,28 @@ x = F.interpolate(x, size=input_shape, mode='bilinear', align_corners=False)
 
 This consistent handling of resolution across both training and evaluation phases ensures fair comparisons and reliable performance metrics.
 
-\subsection{Loss Function Design}
+\section{Finial Evaluation Resolution Strategy}\label{sec:Evaluation}
+For the final evaluation on the validation set, I implemented two distinct approaches to assess the model's performance under different resolution conditions:
+
+\subsection{Fixed Working Resolution Evaluation}
+In the first approach (implemented in \texttt{test\_deeplabv3plus.py}), both input images and evaluation metrics were processed at the consistent working resolution of 512×1024 pixels. This approach maintains perfect alignment with the training conditions, allowing for a direct assessment of the model's performance without introducing resolution-related variables.
+
+\subsection{Original Resolution Evaluation}
+The second approach (implemented in \textbf{\texttt{test\_deeplabv3plus\_origin\_resolution.py})} was designed to evaluate the model under real-world deployment conditions where output is needed at the original high resolution. In this pipeline:
+\begin{itemize}
+	\item Input images are downsampled from 1024×2048 to 512×1024 for model inference
+	\item The resulting predictions are then upsampled back to the original 1024×2048 resolution
+	\item Evaluation metrics (including mIoU) are calculated at the full 1024×2048 resolution
+\end{itemize}
+This approach provides insights into how the model's predictions translate to full-resolution applications. While this method typically yields slightly lower mIoU scores compared to the fixed resolution evaluation (approximately 0.06\% decrease), it provides a more realistic assessment of the model's practical performance on high-resolution imagery. The difference in performance highlights the challenges of resolution changes in semantic segmentation tasks.
+
+\section{Loss Function Design}\label{sec:Loss_Function}
 
 For loss calculation, I implemented a comprehensive loss function strategy to address the challenges of semantic segmentation. Initially, I used standard cross-entropy loss during the first training phase. For later training stages, I developed a more sophisticated combined loss approach found in \texttt{utils/losses.py}.
 
 My loss function implementation consists of three main components:
 
-\subsubsection{Label Smoothing Cross Entropy Loss}
+\subsection{Label Smoothing Cross Entropy Loss}
 To reduce overfitting and improve model generalization, I implemented label smoothing for the cross-entropy loss. Rather than using hard targets (1 for correct class, 0 for others), label smoothing assigns a value slightly less than 1 to the correct class and small non-zero values to other classes:
 
 \begin{itemize}
@@ -157,7 +180,7 @@ To reduce overfitting and improve model generalization, I implemented label smoo
 
 This technique helps prevent the model from becoming overconfident and improves its ability to generalize. I used a smoothing factor of 0.1, which provided a good balance between confidence and generalization.
 
-\subsubsection{Dice Loss}
+\subsection{Dice Loss}
 To directly optimize for the intersection over union metric, I implemented Dice loss, which is particularly effective for segmentation tasks with class imbalance. The Dice coefficient measures the overlap between predicted and ground truth segmentations:
 
 \begin{equation}
@@ -173,7 +196,7 @@ Where:
 
 The Dice loss is calculated as $1 - \text{Dice}$, so minimizing this loss maximizes the Dice coefficient.
 
-\subsubsection{Combined Loss Function}
+\subsection{Combined Loss Function}
 To leverage the benefits of both approaches, I created a combined loss function that is a weighted sum of label smoothing cross-entropy and Dice loss:
 
 \begin{equation}
@@ -193,7 +216,7 @@ This combined approach addresses multiple challenges:
 Additionally, all loss functions properly handle ignored pixels (labeled with 255) and support class weights to address class imbalance issues.
 
 
-\subsection{Model Aggregation}
+\section{Model Aggregation}\label{sec:Model_Aggregation}
 After training all folds, I evaluated three model aggregation approaches:
 \begin{enumerate}
     \item The best mIoU model from all folds
@@ -203,26 +226,30 @@ After training all folds, I evaluated three model aggregation approaches:
 
 The best performing model from these three approaches was then used as the pre-trained model for the next 20-epoch training iteration. Since the initial training was for 10 epochs, subsequent training stages began at epochs 10, 30, 50, etc.
 
-The results for the first cross-validation stage (epochs 10-30) are shown in Figures~\ref{fig:cross_val_10_30_combined} and \ref{fig:cross_val_10_30_val}. Figure~\ref{fig:cross_val_10_30_combined} shows the training curves and IoU progression for fold 1, while Figure~\ref{fig:cross_val_10_30_val} compares mIoU across all folds on the official validation set.
+The results for the first cross-validation stage (epochs 10-30) are shown in Figure~\ref{fig:cross_val_10_30_val}. 
+\section{Data augmentation}\label{sec:Data_Augmentation}
+To improve model generalization, I implemented a three-level data augmentation framework for the Cityscapes dataset:
 
-\subsection{Training Results for Epochs 30-50}
-During the second training phase (epochs 30-50), I observed a slight decrease in overall performance. However, the averaged model still maintained a respectable mIoU of 54\%, indicating the robustness of the model averaging approach. The training performance for this stage is illustrated in Figures~\ref{fig:cross_val_30_50_combined} and \ref{fig:cross_val_30_50_val}. Figure~\ref{fig:cross_val_30_50_combined} presents the training curves and IoU progression for fold 1, while Figure~\ref{fig:cross_val_30_50_val} shows the mIoU comparison across all folds.
+\begin{enumerate}
+    \item \textbf{None}: No augmentation, only image resizing to target dimensions
+    \item \textbf{Standard}: A set of basic augmentations including horizontal flipping (50\% probability), Gaussian blur (30\%), gamma adjustment (25\%), random upscaling (50\%), random cropping (40\%), and color jittering (50\%)
+    \item \textbf{Advanced}: All standard augmentations plus more aggressive transformations like color channel swapping (10\%), grayscale conversion (10\%), sharpening (10\%), color balance adjustment (10\%), enhanced color jittering (15\%), noise addition (10\%), modified elastic transformation (10\%), and color-based image mixup (5\%)
+\end{enumerate}
 
+The augmentation level could be specified in the configuration file or overridden via command-line arguments. For cross-validation, the data module ensured that:
+\begin{itemize}
+    \item Training folds received the specified augmentation level
+    \item Validation folds always used 'none' augmentation to maintain evaluation consistency
+    \item Each fold received independent dataset copies with appropriate transform settings
+\end{itemize}
 
-\subsection{Training Results for Epochs 50-70}
-Encouragingly, after I apply data augmentation techniques, performance improved during the third training phase (epochs 50-70), with the best model achieving an mIoU of 56\%. This improvement suggests that the learning rate adjustment strategy and continued training were effective in refining the model parameters. The results of this training phase are presented in Figures~\ref{fig:cross_val_50_70_combined} and \ref{fig:cross_val_50_70_val}, showing the detailed performance metrics across different folds.
+All transformations were carefully designed to preserve semantic integrity by avoiding black border artifacts, using reflection padding instead of constant black values, and preventing confusing scenes through selective application of transforms.
 
-
-
-\subsection{Final Optimization and Results}
-For final optimization (70-90 epochs), I implemented a cosine learning rate scheduler and fine-tuned the combined loss function with adjusted weights. The combined loss with equal weighting between label smoothed cross-entropy and Dice loss (0.5:0.5) proved most effective during this phase. With this approach, the best model achieved an mIoU of approximately 58\%, although there was considerable variance across folds. Given the performance plateau and the significant variance, I decided to conclude the training at this point. (I also tried to use the warmup learning rate strategy, but it did not yield better results. I find when the learning rate is reset after the period, the optimization process is not as effective as the cosine learning rate strategy.(not stable))
-
-The final test results are presented in Figures~\ref{fig:per_class_iou}, \ref{fig:confusion_matrix}, and \ref{fig:class_weight_vs_iou}, with detailed visualizations available in the directory \texttt{outputs/deeplabv3plus\_test\_results}. Figure~\ref{fig:per_class_iou} shows the per-class IoU scores, Figure~\ref{fig:confusion_matrix} presents the confusion matrix for segmentation results, and Figure~\ref{fig:class_weight_vs_iou} illustrates the relationship between class weights and IoU scores. Figure~\ref{fig:3model_comparison} compares the performance of the three model aggregation approaches.
 
 
 \section{Acknowledgements}
 I would like to acknowledge the authors of the DeepLabV3+ architecture, whose work provided the foundation for this implementation. I also utilized GitHub Copilot as a programming assistant to help streamline code development and debugging.
-\section{Figures}
+\section{Figures}\label{sec:Figures}
 
 \begin{figure}[htbp]
 		\centering
@@ -232,22 +259,18 @@ I would like to acknowledge the authors of the DeepLabV3+ architecture, whose wo
 \end{figure}
 
 \begin{figure}[htbp]
-    \centering
-    \begin{subfigure}[b]{0.8\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{cross_10_30.png}
-        \caption{Training curves for fold 1, epochs 10-30}
-        \label{fig:cross_val_10_30}
-    \end{subfigure}
-    \vspace{0.5cm}
-    \begin{subfigure}[b]{0.8\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{iou_history_cross_10_30.png}
-        \caption{IoU progression history for fold 1, epochs 10-30}
-        \label{fig:cross_val_10_30_iou_his}
-    \end{subfigure}
-    \caption{Training performance for the first cross-validation stage (epochs 10-30)}
-    \label{fig:cross_val_10_30_combined}
+		\centering
+		\includegraphics[width=0.8\textwidth]{cross_10_30.png}
+		\caption{Training curve for epochs 10 to 30 with cross-validation, showing improved generalization}
+		\label{fig:cross_val_10_30}
+\end{figure}
+
+%training_metrics_epoch_10_to_69
+\begin{figure}[htbp]
+		\centering
+		\includegraphics[width=1.0\textwidth]{outputs/deeplabv3plus_test_results/early_training_epochs_10_to_69.png}
+		\caption{Training metrics for epochs 10-69 for fold 1, showing performance patterns throughout consecutive training intervals with cosine learning rate scheduling and model aggregation applied after each 20-epoch segment}
+		\label{fig:train_metrics_10_69}
 \end{figure}
 
 \begin{figure}[htbp]
@@ -257,24 +280,6 @@ I would like to acknowledge the authors of the DeepLabV3+ architecture, whose wo
     \label{fig:cross_val_10_30_val}
 \end{figure}
 
-\begin{figure}[htbp]
-    \centering
-    \begin{subfigure}[b]{0.8\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{cross_30_50.png}
-        \caption{Training curves for fold 1, epochs 30-50}
-        \label{fig:cross_val_30_50}
-    \end{subfigure}
-    \vspace{0.5cm}
-    \begin{subfigure}[b]{0.8\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{iou_history_cross_30_50.png}
-        \caption{IoU progression history for fold 1, epochs 30-50}
-        \label{fig:cross_val_30_50_iou_his}
-    \end{subfigure}
-    \caption{Training performance for the second cross-validation stage (epochs 30-50)}
-    \label{fig:cross_val_30_50_combined}
-\end{figure}
 
 \begin{figure}[htbp]
     \centering
@@ -283,37 +288,21 @@ I would like to acknowledge the authors of the DeepLabV3+ architecture, whose wo
     \label{fig:3model_comparison_30_50}
 \end{figure}
 
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.8\textwidth]{folds_30_50.png}
-    \caption{mIoU comparison across all folds on the official validation set, epochs 30-50}
-    \label{fig:cross_val_30_50_val}
-\end{figure}
 
-\begin{figure}[htbp]
-    \centering
-    \begin{subfigure}[b]{0.8\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{cross_50_70.png}
-        \caption{Training curves for fold 1, epochs 50-70}
-        \label{fig:cross_val_50_70}
-    \end{subfigure}
-    \vspace{0.5cm}
-    \begin{subfigure}[b]{0.8\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{iou_history_cross_50_70.png}
-        \caption{IoU progression history for fold 1, epochs 50-70}
-        \label{fig:cross_val_50_70_iou_his}
-    \end{subfigure}
-    \caption{Training performance for the third cross-validation stage (epochs 50-70)}
-    \label{fig:cross_val_50_70_combined}
-\end{figure}
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.8\textwidth]{folds_50_70.png}
     \caption{mIoU comparison across all folds on the official validation set, epochs 50-70}
     \label{fig:cross_val_50_70_val}
+\end{figure}
+
+%train_metrics_70_150.png
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1.0\textwidth]{outputs/deeplabv3plus_test_results/training_metrics_epoch_70_to_149.png}
+		\caption{Training metrics for epochs 70-150 for fold 1, showing performance patterns throughout consecutive training intervals with cosine learning rate scheduling and model aggregation applied after each 20-epoch segment}
+    \label{fig:train_metrics_70_150}
 \end{figure}
 
 %folds 70_90.png
@@ -324,12 +313,38 @@ I would like to acknowledge the authors of the DeepLabV3+ architecture, whose wo
 		\label{fig:cross_val_70_90_val}
 \end{figure}
 
+%folds 90_110.png
 \begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.8\textwidth]{3model_comparison_70_90.png}
-    \caption{Comparison of the three model aggregation approaches for epochs 70-90, highlighting their performance differences}
-    \label{fig:3model_comparison}
+		\centering
+		\includegraphics[width=0.8\textwidth]{folds_90_110.png}
+		\caption{mIoU comparison across all folds on the official validation set, epochs 90-110}
+		\label{fig:cross_val_90_110_val}
 \end{figure}
+
+%folds 110_130.png
+\begin{figure}[htbp]
+		\centering
+		\includegraphics[width=0.8\textwidth]{folds_110_130.png}
+		\caption{mIoU comparison across all folds on the official validation set, epochs 110-130}
+		\label{fig:cross_val_110_130_val}
+\end{figure}
+
+%folds 130_150.png
+\begin{figure}[htbp]
+		\centering
+		\includegraphics[width=0.8\textwidth]{folds_130_150.png}
+		\caption{mIoU comparison across all folds on the official validation set, epochs 130-150}
+		\label{fig:cross_val_130_150_val}
+\end{figure}
+
+%training_metrics_epoch_10_to_149.png
+\begin{figure}[htbp]
+		\centering
+		\includegraphics[width=1.0\textwidth]{outputs/deeplabv3plus_test_results/training_metrics_epoch_10_to_149.png}
+		\caption{Training metrics for epochs 10-149 for fold 1, showing performance patterns throughout consecutive training intervals with cosine learning rate scheduling and model aggregation applied after each 20-epoch segment}
+		\label{fig:train_metrics_10_149}
+\end{figure}
+
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.8\textwidth]{outputs/deeplabv3plus_test_results/per_class_iou.png}

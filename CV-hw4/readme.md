@@ -27,7 +27,10 @@ CV-hw4/
 ├── train_simple.py        # Simplified training script
 ├── test_*.py              # Various test scripts
 ├── requirements.txt       # Project dependencies
-└── AUGMENTATION.md        # Detailed augmentation documentation
+├── check_setup.py         # Check environment setup
+├── AUGMENTATION.md        # Detailed augmentation documentation
+├── EVALUATION.md          # Detailed evaluation documentation
+└── MODEL.md               # Detailed deeplabv3plus model documentation
 ```
 
 ## Models
@@ -37,6 +40,8 @@ The project implements three semantic segmentation architectures:
 1. **UNet**: A classic encoder-decoder architecture with skip connections.
 2. **DeepLabV3**: Implementation of the DeepLabV3 model with atrous spatial pyramid pooling.
 3. **DeepLabV3+**: An enhanced version of DeepLabV3 with better decoder module and low-level feature integration.
+
+Finally, the project use DeepLabV3+ as the main model for training and evaluation. The model is implemented in [deeplabv3plus.py](models/deeplabv3plus.py), see detailed information in [MODEL.md](MODEL.md).
 
 ## Dataset
 
@@ -145,8 +150,12 @@ Training results, model checkpoints, and visualizations are saved in the `output
 To test a trained model:
 
 ```bash
-python test_deeplabv3plus.py --model_path outputs/deeplabv3plus_experiment/models/best_model.pth
+python test_deeplabv3plus.py -- checkpoint <your deeplabv3plus model path> # in resolution 512x1024
+# or test the model in original resolution:
+python test_deeplabv3plus_origin_resolution.py -- checkpoint <your deeplabv3plus model path> 
+# in resolution 1024x2048, will only loss about 0.06% mIoU, this still inference in 512x1024 resolution for better performance but upsample to 1024x2048 resolution for evaluation
 ```
+For the detailed evaluation, see [EVALUATION.md](EVALUATION.md).
 
 ## License
 
