@@ -169,4 +169,4 @@ This project is based on the Cityscapes dataset, which has its own licensing ter
 - [PyTorch](https://pytorch.org/)
 - [DeepLab Paper](https://arxiv.org/abs/1706.05587)
 - [UNet Paper](https://arxiv.org/abs/1505.04597)
-- Copilot for coding assistance
+- [Copilot for coding assistance](https://github.com/features/copilot)
