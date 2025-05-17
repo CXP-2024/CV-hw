@@ -27,7 +27,7 @@ from utils.visualization import calculate_miou
 
 def load_config(config_path):
     """Load configuration from YAML file"""
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 
 
@@ -515,10 +515,9 @@ def main(args):
         plt.close()
         
         print(f"Full confusion matrix visualization saved to {full_conf_matrix_path}")
-    
-    # Save results to text file
+      # Save results to text file - explicitly use UTF-8 encoding
     results_path = os.path.join(args.output_dir, "results.txt")
-    with open(results_path, 'w') as f:
+    with open(results_path, 'w', encoding='utf-8') as f:
         f.write("===== DeepLabV3+测试结果 (Test Results) =====\n")
         f.write(f"DeepLabV3+简单平均IoU (Simple Mean IoU): {miou:.4f}\n")
         f.write(f"DeepLabV3+加权平均IoU (Weighted Mean IoU): {weighted_miou:.4f}\n")

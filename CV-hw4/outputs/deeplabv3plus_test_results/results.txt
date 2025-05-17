@@ -1,0 +1,46 @@
+===== DeepLabV3+测试结果 (Test Results) =====
+DeepLabV3+简单平均IoU (Simple Mean IoU): 0.6256
+DeepLabV3+加权平均IoU (Weighted Mean IoU): 0.8669
+混淆矩阵可视化 (Confusion Matrix): 请查看 confusion_matrix.png 和 full_confusion_matrix.png
+
+分辨率策略 (Resolution Strategy):
+- 输入分辨率 (Input Resolution): 512x1024 (模型训练分辨率)
+- 评估分辨率 (Evaluation Resolution): 原始图像分辨率 (通常为2048x1024)
+- 上采样方法 (Upsampling Method): 最近邻插值 (Nearest Neighbor)
+
+类别信息 (Class Information):
+ID   名称 (Name)                     权重 (Weight)    IoU       颜色 (Color)     
+---------------------------------------------------------------------------
+0    road                          0.3765         0.9612    RGB(128, 64, 128)
+1    sidewalk                      0.0541         0.7251    RGB(244, 35, 232)
+2    building                      0.2192         0.8500    RGB(70, 70, 70)
+3    wall                          0.0073         0.3013    RGB(102, 102, 156)
+4    fence                         0.0082         0.3807    RGB(190, 153, 153)
+5    pole                          0.0148         0.4651    RGB(153, 153, 153)
+6    traffic light                 0.0020         0.5247    RGB(250, 170, 30)
+7    traffic sign                  0.0067         0.5963    RGB(220, 220, 0)
+8    vegetation                    0.1732         0.8696    RGB(107, 142, 35)
+9    terrain                       0.0083         0.5505    RGB(152, 251, 152)
+10   sky                           0.0335         0.9088    RGB(70, 130, 180)
+11   person                        0.0130         0.6647    RGB(220, 20, 60)
+12   rider                         0.0022         0.4637    RGB(255, 0, 0) 
+13   car                           0.0651         0.8822    RGB(0, 0, 142) 
+14   truck                         0.0030         0.4883    RGB(0, 0, 70)  
+15   bus                           0.0039         0.6777    RGB(0, 60, 100)
+16   train                         0.0011         0.5628    RGB(0, 80, 100)
+17   motorcycle                    0.0008         0.3871    RGB(0, 0, 230) 
+18   bicycle                       0.0071         0.6264    RGB(119, 11, 32)
+
+测试图像总数 (Total images tested): 500
+可视化图像 (Visualized images):
+1. frankfurt_000000_000294_leftImg8bit.png
+2. frankfurt_000000_000576_leftImg8bit.png
+3. frankfurt_000000_001016_leftImg8bit.png
+4. frankfurt_000000_001236_leftImg8bit.png
+5. frankfurt_000000_001751_leftImg8bit.png
+6. frankfurt_000000_002196_leftImg8bit.png
+7. frankfurt_000000_002963_leftImg8bit.png
+8. frankfurt_000000_003025_leftImg8bit.png
+9. frankfurt_000000_003357_leftImg8bit.png
+10. frankfurt_000000_003920_leftImg8bit.png
+...and 20 more images

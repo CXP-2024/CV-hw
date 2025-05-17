@@ -128,8 +128,7 @@ def main():
         print("\n✓ All checks passed! You're ready to run the project.")
         print("\nSuggested steps:")
         print("1. Train a model:     python train.py --model unet")
-        print("2. Evaluate:          python evaluate.py --checkpoint <path/to/checkpoint>")
-        print("3. Visualize results: python visualize.py --checkpoint <path/to/checkpoint> --input <input_image>")
+        print("2. Evaluate:          python test_deeplabv3plus.py --checkpoint <path/to/model>")
     else:
         print("\n⚠ Some checks failed. Please fix the issues before running the project.")
     
