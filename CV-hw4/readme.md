@@ -4,6 +4,16 @@ This project implements various semantic segmentation models to segment urban st
 
 ## See detailed report in [report.pdf](report/report.pdf).
 
+## Pre-trained Model
+
+I've trained a DeepLabV3+ model on the Cityscapes dataset that achieves competitive performance. The model weights are publicly available for inference or fine-tuning.
+
+### Download Link from Google Drive
+
+[Download DeepLabV3+ Pre-trained Model](https://drive.google.com/file/d/15Z5Ac-ldrhCouK37_xTnO7ewB0u7rK1F/view?usp=drive_link)
+
+You can use this model with the provided testing scripts to generate segmentation maps for urban scene images.
+
 ## Project Structure
 
 ```
