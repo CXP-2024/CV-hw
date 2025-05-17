@@ -1,6 +1,8 @@
 # Semantic Segmentation on Cityscapes Dataset
 
-This project implements various semantic segmentation models to segment urban street scenes from the Cityscapes dataset. The implemented models include UNet, DeepLabV3, and DeepLabV3+, with comprehensive training pipelines, data augmentation strategies, and evaluation tools.
+This project implements various semantic segmentation models to segment urban street scenes from the Cityscapes dataset. The implemented models include UNet, DeepLabV3, and DeepLabV3+, with comprehensive training pipelines, data augmentation strategies, and evaluation tools. 
+
+## See detailed report in [report.pdf](report/report.pdf).
 
 ## Project Structure
 
@@ -150,9 +152,9 @@ Training results, model checkpoints, and visualizations are saved in the `output
 To test a trained model:
 
 ```bash
-python test_deeplabv3plus.py -- checkpoint <your deeplabv3plus model path> # in resolution 512x1024
+python test_deeplabv3plus.py --checkpoint <your deeplabv3plus model path> # in resolution 512x1024
 # or test the model in original resolution:
-python test_deeplabv3plus_origin_resolution.py -- checkpoint <your deeplabv3plus model path> 
+python test_deeplabv3plus_origin_resolution.py --checkpoint <your deeplabv3plus model path>
 # in resolution 1024x2048, will only loss about 0.06% mIoU, this still inference in 512x1024 resolution for better performance but upsample to 1024x2048 resolution for evaluation
 ```
 For the detailed evaluation, see [EVALUATION.md](EVALUATION.md).

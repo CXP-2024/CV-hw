@@ -2,9 +2,9 @@
 
 ## For model evaluation, you can run the following command to test the model:
 ```bash
-python test_deeplabv3plus.py -- checkpoint <your deeplabv3plus model path> # in resolution 512x1024
+python test_deeplabv3plus.py --checkpoint <your deeplabv3plus model path> # in resolution 512x1024
 # or test the model in original resolution:
-python test_deeplabv3plus_origin_resolution.py -- checkpoint <your deeplabv3plus model path> 
+python test_deeplabv3plus_origin_resolution.py --checkpoint <your deeplabv3plus model path>
 # in resolution 1024x2048, will only loss about 0.06% mIoU, this still inference in 512x1024 resolution for better performance but upsample to 1024x2048 resolution for evaluation
 ```
 
